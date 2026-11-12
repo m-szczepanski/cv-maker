@@ -1,0 +1,5 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Instruction files loaded into every session alongside AGENTS.md.
+  "instructions": [".AGENTS.md"],
+}

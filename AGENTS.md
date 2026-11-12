@@ -3,6 +3,7 @@
 The spec is the source of truth: [`docs/details.md`](docs/details.md).
 The work sequence lives in [`docs/implementation-plan.md`](docs/implementation-plan.md).
 Decisions on ambiguous points are logged in [`docs/decisions.md`](docs/decisions.md).
+Coding rules (how to write the code) live in [`.AGENTS.md`](.AGENTS.md).
 
 ## Working rules
 
