@@ -1,8 +1,10 @@
-//! CLI definitions (spec §3). M0: full command surface with stub handlers.
+//! CLI definitions (spec §3). Dispatches subcommands to `crate::commands`.
 
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
+
+use crate::commands;
 
 /// `cv` — code-first YAML to one-page PDF CV tool.
 #[derive(Parser, Debug)]
@@ -31,9 +33,9 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Write a starter `cv.yaml` in the current directory (M1).
+    /// Write a starter `cv.yaml` in the current directory (spec §3).
     Init(InitArgs),
-    /// Build a YAML file into a one-page PDF next to it (M1).
+    /// Build a YAML file into a one-page PDF next to it.
     Build(BuildArgs),
     /// Rebuild on change of the YAML or its template files (M5).
     Watch(WatchArgs),
@@ -96,27 +98,30 @@ pub struct CheckArgs {
 }
 
 /// Dispatch a parsed CLI to its command handler.
-///
-/// M0: every command is an honest stub — it exists, parses its arguments, and reports that it
-/// is not implemented yet, exiting non-zero (plan step 0.4). Handlers land with their milestone.
 pub fn run(cli: Cli) -> Result<(), String> {
     if cli.verbose {
         eprintln!("cv: verbose mode on; font paths: {:?}", cli.font_path);
     }
 
-    match &cli.command {
-        Command::Init(_) => Err(not_yet("init")),
-        Command::Build(_) => Err(not_yet("build")),
-        Command::Watch(_) => Err(not_yet("watch")),
-        Command::Check(_) => Err(not_yet("check")),
-        Command::Templates => Err(not_yet("templates")),
-        Command::Schema => Err(not_yet("schema")),
-        Command::Fonts => Err(not_yet("fonts")),
-    }
+    let result: crate::error::Result<()> = match &cli.command {
+        Command::Init(args) => commands::init::run(args),
+        Command::Build(args) => commands::build::run(args, &cli),
+        Command::Watch(_) => Err(unsupported(not_yet("watch"))),
+        Command::Check(_) => Err(unsupported(not_yet("check"))),
+        Command::Templates => Err(unsupported(not_yet("templates"))),
+        Command::Schema => Err(unsupported(not_yet("schema"))),
+        Command::Fonts => Err(unsupported(not_yet("fonts"))),
+    };
+
+    result.map_err(|e| crate::error::report(&e))
 }
 
 fn not_yet(name: &str) -> String {
     format!(
         "cv {name} is not implemented yet (see docs/implementation-plan.md for the milestone schedule)"
     )
+}
+
+fn unsupported(message: String) -> crate::error::Error {
+    crate::error::Error::Unsupported(message)
 }
