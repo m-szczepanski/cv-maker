@@ -1,0 +1,3 @@
+# Spec §2: Rust stable, pinned via this file. Edition 2024 (see docs/decisions.md ADR-0001).
+[toolchain]
+channel = "stable"

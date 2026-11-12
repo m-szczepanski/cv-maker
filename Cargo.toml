@@ -1,0 +1,34 @@
+[package]
+name = "cv"
+version = "0.1.0"
+edition = "2024"
+description = "Code-first YAML to one-page PDF CV tool"
+license = "MIT"
+
+[dependencies]
+# CLI parsing with the derive API (spec §2).
+clap = { version = "4", features = ["derive"] }
+# Serialization derives for the YAML data model (spec §2).
+serde = { version = "1", features = ["derive"] }
+# Actively maintained fork of the archived serde_yaml, for parsing user YAML (spec §2).
+serde_yaml_ng = "0.10"
+# JSON Schema derived from the Rust model structs, never hand-written (spec §2).
+schemars = "1"
+# Rich diagnostics with source spans for user-facing errors (spec §2, §5).
+miette = "7"
+# Ergonomic error enum definitions (spec §2).
+thiserror = "2"
+# Embeds templates and fonts into the single binary (spec §2, §10). include_dir over
+# rust-embed: no proc-macro build step, identical behavior in debug and release builds
+# (rust-embed re-reads from disk in debug, which would break template behavior parity).
+include_dir = "0.7"
+# Debounced file watching for `cv watch` (spec §2, M5).
+notify = "8"
+
+[dev-dependencies]
+# Temporary directories for CLI end-to-end tests.
+tempfile = "3"
+
+[profile.release]
+# Deterministic, reproducible release binaries.
+strip = true
