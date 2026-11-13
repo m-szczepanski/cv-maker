@@ -5,8 +5,9 @@ this file only records what is done. Mark a task `[x]` only when it is implement
 the Gates pass (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
 `cargo test` — run locally, ADR-0013). Strikethrough tasks are dropped decisions.
 
-- **Current state:** M3 implemented — Gates green; M3 human visual review (3.7)
-  pending, plus the M1 visual check (1.7.4) and the M1/M2 review stops.
+- **Current state:** M3 implemented — all tasks done, Gates green, 3.7 visual review
+  passed; M3 ready for review/merge. The M1 visual check (1.7.4) and the M1/M2 review
+  stops are still open.
 
 ## Milestone 0 — Project bootstrap ✅
 
@@ -75,10 +76,9 @@ span-scan fallbacks, disk-failure paths), per `.AGENTS.md` rule 21.
 - [x] 3.4 `--font-path` end-to-end
 - [x] 3.5 Manifest enforcement in `cv check`
 - [x] 3.6 Per-field change tests
-- [ ] 3.7 Human visual review of design combos — eight combos rendered (baseline,
+- [x] 3.7 Human visual review of design combos — eight combos rendered (baseline,
       letter, Source Sans 3, IBM Plex Sans variable, red accent, tight, large,
-      Plex Mono code spans) and shown in the Review pane on 2026-11-13; awaiting
-      the human pass.
+      Plex Mono code spans) on 2026-11-13; human pass completed, approved.
 
 Measured coverage (`cargo llvm-cov`, end of M3): 97.4% lines; every remaining
 uncovered line is a defensive branch carrying an invariant comment (unreachable
