@@ -72,7 +72,7 @@ span-scan fallbacks, disk-failure paths), per `.AGENTS.md` rule 21.
 - [x] 3.1 All design fields wired to the template
 - [x] 3.2 Bundled fonts + `fonts/LICENSES.md`
 - [x] 3.3 `cv fonts`
-- [ ] 3.4 `--font-path` end-to-end
+- [x] 3.4 `--font-path` end-to-end
 - [ ] 3.5 Manifest enforcement in `cv check`
 - [ ] 3.6 Per-field change tests
 - [ ] 3.7 Human visual review of design combos

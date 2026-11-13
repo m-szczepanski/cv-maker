@@ -286,6 +286,30 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   on each `cv fonts`/`check`/`build` call — parsing the 19 embedded files twice costs
   milliseconds and system discovery still runs once.
 
+## ADR-0022 — Font-path end-to-end fixture: renamed Inter clone "CvTest Sans" (plan 3.4)
+
+- **Context:** Plan 3.4 requires proof that a `--font-path`/`design.font_paths`
+  directory is *discoverable and selectable*. Every font file we already ship is also
+  in the bundle, so picking it proves nothing about user dirs; relying on some
+  machine-installed family would break the determinism rule (`.AGENTS.md` 18).
+- **Decision:** `tests/fixtures/fonts/CvTestSans-Regular.ttf` — the bundled
+  Inter-Regular with name-table IDs 1/2/3/4/6 rewritten to a unique family
+  "CvTest Sans" (OFL §Revision: the Reserved Font Name is dropped from all records,
+  the license ships next to the fixture as `CvTestSans-LICENSE.txt`). The tests show
+  that the family (a) fails validation without the directory, (b) validates, lists
+  under source `font-path`, builds and embeds into the PDF with `--font-path`, and
+  (c) resolves via `design.font_paths` relative to the YAML. Regenerate with
+  `fontTools` (dev-only, not a crate dependency):
+  `TTFont('fonts/Inter-Regular.ttf')` → `name.setName` for the exact-match strings
+  `Inter` / `Inter Regular` / `Inter-Regular` on IDs 1/2/4/6, plus the `Inter-Regular`
+  segment of the unique name (ID 3); the copyright notice (ID 0) stays untouched as
+  OFL requires → save.
+- **Rationale:** A uniquely-named, license-clean clone is the only way to assert
+  "resolved *because of* the user dir" deterministically; the negative test (a) rules
+  out the fixture family sneaking in via system fonts.
+- **Consequences:** ~400 KB test fixture in the repo; no production code paths depend
+  on it.
+
 ## Open questions (spec §14) — status
 
 Assigned to milestones per the implementation plan; each gets an ADR when resolved.
