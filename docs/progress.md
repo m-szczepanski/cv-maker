@@ -5,9 +5,8 @@ this file only records what is done. Mark a task `[x]` only when it is implement
 the Gates pass (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
 `cargo test` — run locally, ADR-0013). Strikethrough tasks are dropped decisions.
 
-- **Current state:** M3 implemented — all tasks done, Gates green, 3.7 visual review
-  passed; M3 ready for review/merge. The M1 visual check (1.7.4) and the M1/M2 review
-  stops are still open.
+- **Current state:** M4 implemented — all tasks done, Gates green; M4 ready for
+  review/merge. The M1 visual check (1.7.4) and the M1/M2 review stops are still open.
 
 ## Milestone 0 — Project bootstrap ✅
 
@@ -86,7 +85,7 @@ embedded assets, span-scan fallbacks, disk-failure paths), per `.AGENTS.md` rule
 The `cv fonts` listing, manifest enforcement and the per-field tests are fully
 covered.
 
-## Milestone 4 — One-page fit
+## Milestone 4 — One-page fit 🔜 review
 
 - [x] 4.1 Fit loop (Phase A spacing → Phase B font scale; binary search)
 - [x] 4.2 Hard guarantees (max iterations, floor, determinism, least-aggressive)
@@ -98,6 +97,14 @@ covered.
       a fitted shrink build 216 ms, worst-case 13-compile overflow fit 309 ms.
       Spec §12 M4 target met; the extra probes are cheap because fonts, the template
       and the compiler state load once per build (plan 1.4.4).
+
+Measured coverage (`cargo llvm-cov`, end of M4): 97.8% lines; the residual uncovered
+lines are all pre-existing defensive branches carrying invariant comments (unreachable
+embedded assets, span-scan fallbacks, disk-failure paths, the M5-reserved Typst-warning
+loop), per `.AGENTS.md` rule 21. The fit loop, overflow warning and floor math are
+fully covered — the first coverage pass flagged three reachable gaps (`body: 0pt`
+floor guard, the Phase-A floor-probe return, the verbose telemetry line), closed by
+tests in this commit.
 
 ## Milestone 5 — Templates and watch
 

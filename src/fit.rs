@@ -348,6 +348,16 @@ mod tests {
     }
 
     #[test]
+    fn a_zero_body_size_floors_the_font_phase_at_the_original_scale() {
+        // `sizes.body: 0pt` parses (the model allows any finite length); the
+        // ratio would divide by zero, so the phase must be disabled instead.
+        let design = design_with(|d| {
+            d.sizes.body = Length::new(0.0, LengthUnit::Pt);
+        });
+        assert_eq!(font_floor_scale(&design), 1.0);
+    }
+
+    #[test]
     fn tightness_maps_linearly_to_the_phase_a_floors() {
         let scales = |t: f64| {
             let p = scales_at(0.8, 0.9, t);
@@ -552,6 +562,29 @@ mod tests {
         );
         assert!(!outcome.overflowed);
         assert_eq!(outcome.compiles, 1 + MAX_PHASE_PROBES);
+    }
+
+    #[test]
+    fn phase_a_can_land_exactly_on_its_floor_probe() {
+        // Only `t = 1` fits (spacing at the exact floor): the grid misses it, so
+        // the explicit floor probe is what returns the fitting result.
+        let probes = Rc::new(RefCell::new(Vec::new()));
+        let config = default_config(true);
+        let outcome = fake_session(
+            &config,
+            |p| p.spacing_scale <= SPACING_FLOOR,
+            probes.clone(),
+        )
+        .run()
+        .expect("compile");
+        assert!(
+            (outcome.applied.spacing_scale - SPACING_FLOOR).abs() < 1e-9,
+            "the floor probe result must be adopted: {:?}",
+            outcome.applied
+        );
+        assert_eq!(outcome.applied.font_scale, 1.0, "Phase B was not needed");
+        assert_eq!(outcome.compiles, 1 + MAX_PHASE_PROBES + 1);
+        assert!(!outcome.overflowed);
     }
 
     #[test]

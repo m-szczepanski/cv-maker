@@ -154,6 +154,23 @@ fn fit_note_of(out: &str) -> String {
         .expect("fit segment")
         .to_owned()
 }
+
+/// `--verbose` exposes the loop telemetry (compile count) for diagnostics.
+#[test]
+fn verbose_reports_the_compile_count() {
+    let dir = unique_dir("fit-verbose");
+    fs::write(dir.join("cv.yaml"), cv_yaml(14, 2)).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["--verbose", "build", "--output", "cv.pdf"]);
+    assert!(ok, "got: {out}");
+    assert!(
+        out.contains("compiles"),
+        "verbose must report the fit compile count, got: {out}"
+    );
+}
+
+/// Plan 4.4: `--no-fit` disables the loop for the run — an overflowing CV is
+/// written as-is, reports `scale 1.00`, and gets no floor warning.
 #[test]
 fn no_fit_flag_skips_the_loop() {
     let dir = unique_dir("fit-nofit-flag");
