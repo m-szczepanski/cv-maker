@@ -56,3 +56,57 @@ impl Manifest {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest(name: &str, description: &str, schema_version: u32) -> Manifest {
+        Manifest {
+            name: name.to_owned(),
+            description: description.to_owned(),
+            schema_version,
+            supported: vec![],
+        }
+    }
+
+    #[test]
+    fn usable_manifests_pass_the_check() {
+        assert!(manifest("t", "d", 1).check_usable().is_ok());
+    }
+
+    #[test]
+    fn blank_identity_fields_are_rejected() {
+        assert_eq!(
+            manifest("  ", "d", 1)
+                .check_usable()
+                .expect_err("blank name"),
+            "must declare a non-empty `name`"
+        );
+        assert_eq!(
+            manifest("t", "", 1)
+                .check_usable()
+                .expect_err("blank description"),
+            "must declare a non-empty `description`"
+        );
+    }
+
+    #[test]
+    fn foreign_schema_versions_are_rejected_with_both_numbers_named() {
+        let problem = manifest("t", "d", 2)
+            .check_usable()
+            .expect_err("version 2 is not understood");
+        assert!(
+            problem.contains("version 2") && problem.contains("version 1"),
+            "got: {problem}"
+        );
+    }
+
+    #[test]
+    fn manifest_yaml_is_parsed_strictly() {
+        let error =
+            Manifest::from_yaml_str("name: t\ndescription: d\nschema_version: 1\nnope: 1\n")
+                .expect_err("unknown keys are rejected");
+        assert!(error.to_string().contains("nope"), "got: {error}");
+    }
+}

@@ -262,6 +262,10 @@ fn walk_typ_files(
     reference: &str,
     out: &mut Vec<(String, String)>,
 ) -> Result<()> {
+    // The `read_dir` and `read` failure arms are disk-fault paths (permissions,
+    // I/O errors, files vanishing mid-walk); surfaced as typed `Error::Io` with
+    // the path named. They cannot be reached from a well-formed template folder
+    // on a healthy disk — same tolerated class as the other disk-failure arms.
     let entries = std::fs::read_dir(dir).map_err(|source| Error::Io {
         path: dir.display().to_string(),
         source,
@@ -421,6 +425,14 @@ mod tests {
         let err = load("comapct", Path::new(".")).expect_err("typo'd name must fail");
         let msg = err.to_string();
         assert!(msg.contains("did you mean 'compact'"), "got: {msg}");
+    }
+
+    #[test]
+    fn load_builtin_itself_rejects_names_that_are_not_embedded() {
+        // The loader's own contract (callers pre-check via `load`, but the shape
+        // stands alone): unknown embedded names get the did-you-mean error.
+        let err = load_builtin("comapct").expect_err("typo'd name must fail");
+        assert!(err.to_string().contains("did you mean 'compact'"));
     }
 
     #[test]

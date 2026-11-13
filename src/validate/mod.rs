@@ -357,6 +357,9 @@ fn check_manifest_consistency(
             "template used here",
         )
         .unwrap_or_else(|| {
+            // Unreachable from a successful check: a path reference was written by
+            // the user, so `design.template` is in the span map (same invariant as
+            // `check_schema_version`).
             Diag::plain(
                 format!(
                     "template '{}' and its manifest.yaml disagree on '{group}'",

@@ -30,6 +30,16 @@ use crate::model::Document;
 /// `.AGENTS.md` rule 22).
 const DEBOUNCE_QUIET: Duration = Duration::from_millis(100);
 
+/// Watch one CV file until the process is stopped (Ctrl-C): build immediately,
+/// then on every change of the watched content (spec §3).
+///
+/// Coverage note (`cargo llvm-cov`, rule 21): this function runs inside the
+/// `cv watch` subprocess that the e2e tests in `tests/watch.rs` must SIGKILL
+/// (the loop has no external stop signal by design, ADR-0029), so its profile
+/// never flushes and only these glue lines read as uncovered. Every decision
+/// the loop makes — wake/drain, snapshot equality, catch-up convergence,
+/// target re-derivation, watch sync — is unit-tested below; the e2e tests
+/// assert the end-to-end behaviour the glue produces.
 pub fn run(args: &WatchArgs, cli: &Cli) -> Result<()> {
     let yaml = absolute_input(&args.file)?;
     // One rebuild is exactly one `cv build` run with the watch defaults: the
@@ -75,31 +85,48 @@ pub fn run(args: &WatchArgs, cli: &Cli) -> Result<()> {
             }
         }
 
-        // Catch-up: rebuild until the on-disk state stops changing. The final
-        // content may differ from what the last build read (an edit landed
-        // mid-build), so the loop re-checks instead of going back to sleep.
-        loop {
-            let after = snapshot(&targets);
-            if !after.differs(&before) {
-                break;
-            }
-            // A changed YAML can re-point design.template (built-in → folder or to
-            // a different folder), so the reference is re-read after its rebuild.
-            let yaml_changed = after.entry(&targets.yaml) != before.entry(&targets.yaml);
+        catch_up(
+            &mut targets,
+            &mut before,
+            &mut || build_once(&build_args, cli),
+            &mut |t| sync_template_watch(&mut watcher, t, &mut watched_template),
+        );
+    }
+}
 
-            build_once(&build_args, cli);
-            before = after;
-            if yaml_changed {
-                targets = watch_targets(&yaml);
-            }
-            sync_template_watch(&mut watcher, &targets, &mut watched_template);
+/// One wake's work: rebuild until the on-disk snapshot stops changing. A save
+/// landing *during* a build is noticed by the next comparison, so the loop
+/// converges on the newest content instead of leaving a stale PDF; every
+/// iteration requires a real content change, so it terminates. Split from `run`
+/// so the convergence behaviour is unit-testable without a live watcher.
+fn catch_up(
+    targets: &mut WatchTargets,
+    before: &mut Snapshot,
+    build: &mut dyn FnMut(),
+    resync: &mut dyn FnMut(&WatchTargets),
+) {
+    loop {
+        let after = snapshot(targets);
+        if !after.differs(before) {
+            return;
         }
+        // A changed YAML can re-point design.template (built-in → folder or to a
+        // different folder), so the reference is re-read after its rebuild.
+        let yaml_changed = after.entry(&targets.yaml) != before.entry(&targets.yaml);
+
+        build();
+        *before = after;
+        if yaml_changed {
+            *targets = watch_targets(&targets.yaml);
+        }
+        resync(targets);
     }
 }
 
 /// What a rebuild can be caused by: the CV file and, if `design.template` is a path
 /// reference, its template folder (spec §6: `cv watch` also watches the custom
 /// template). Re-read after every YAML change so the reference can move.
+#[derive(Clone)]
 struct WatchTargets {
     yaml: PathBuf,
     yaml_dir: PathBuf,
@@ -185,6 +212,9 @@ fn sync_template_watch(
     if let Some(dir) = desired {
         match watcher.watch(&dir, RecursiveMode::Recursive) {
             Ok(()) => *watched = Some(dir),
+            // Watch failing on a folder that passed `is_dir` is a race (removed
+            // in between) or an OS watch-limit fault; the build already states
+            // everything about the folder, and the next sync retries.
             Err(e) => eprintln!(
                 "warning: could not watch template folder '{}': {e}; changes there are picked up on the next YAML save",
                 dir.display()
@@ -261,6 +291,7 @@ fn build_once(args: &BuildArgs, cli: &Cli) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     fn temp_yaml(dir: &Path, yaml: &str) -> PathBuf {
         std::fs::write(dir.join("cv.yaml"), yaml).expect("write yaml");
@@ -297,6 +328,200 @@ mod tests {
             wait_for_burst(&rx, Duration::ZERO),
             Burst::Disconnected
         ));
+    }
+
+    #[test]
+    fn wait_for_burst_notices_a_sender_lost_mid_drain() {
+        let (tx, rx) = events_channel();
+        tx.send(Ok(notify::Event::new(notify::EventKind::Any)))
+            .expect("send");
+        drop(tx);
+        // The first event arrives, then the sender dies during the drain: still
+        // a clean Disconnected, never a hang.
+        assert!(matches!(
+            wait_for_burst(&rx, Duration::ZERO),
+            Burst::Disconnected
+        ));
+    }
+
+    #[test]
+    fn catch_up_builds_once_for_one_change_and_then_converges() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut targets = WatchTargets {
+            yaml: temp_yaml(dir.path(), "schema: 1\ncv:\n  name: A\n"),
+            yaml_dir: dir.path().to_path_buf(),
+            template_dir: None,
+        };
+        let mut before = snapshot(&targets);
+        let mut builds = 0;
+
+        // Quiet disk: no build.
+        catch_up(&mut targets, &mut before, &mut || builds += 1, &mut |_| {});
+        assert_eq!(builds, 0, "nothing changed, nothing rebuilt");
+
+        std::fs::write(&targets.yaml, "schema: 1\ncv:\n  name: B\n").expect("edit");
+        catch_up(&mut targets, &mut before, &mut || builds += 1, &mut |_| {});
+        assert_eq!(builds, 1, "one change, one rebuild");
+        catch_up(&mut targets, &mut before, &mut || builds += 1, &mut |_| {});
+        assert_eq!(builds, 1, "caught up: no further rebuild without a change");
+    }
+
+    #[test]
+    fn catch_up_rebuilds_a_save_that_landed_during_the_build() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut targets = WatchTargets {
+            yaml: temp_yaml(dir.path(), "schema: 1\ncv:\n  name: A\n"),
+            yaml_dir: dir.path().to_path_buf(),
+            template_dir: None,
+        };
+        let mut before = snapshot(&targets);
+        std::fs::write(&targets.yaml, "schema: 1\ncv:\n  name: B\n").expect("first edit");
+
+        let yaml = targets.yaml.clone();
+        let mut builds = 0;
+        // The "build" itself takes time: mid-build, a second save lands. The
+        // catch-up loop must notice it and rebuild again, then stop.
+        catch_up(
+            &mut targets,
+            &mut before,
+            &mut || {
+                builds += 1;
+                if builds == 1 {
+                    std::fs::write(&yaml, "schema: 1\ncv:\n  name: C\n").expect("mid-build edit");
+                }
+            },
+            &mut |_| {},
+        );
+        assert_eq!(builds, 2, "the mid-build save is caught up");
+        let latest = snapshot(&targets);
+        assert!(
+            !latest.differs(&before),
+            "before tracks the content the final build could have consumed"
+        );
+    }
+
+    #[test]
+    fn catch_up_repoints_targets_after_a_yaml_reference_change() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir(dir.path().join("tpl")).expect("tpl dir");
+        let mut targets = WatchTargets {
+            yaml: temp_yaml(
+                dir.path(),
+                "schema: 1\ncv:\n  name: X\ndesign:\n  template: compact\n",
+            ),
+            yaml_dir: dir.path().to_path_buf(),
+            template_dir: None,
+        };
+        let mut before = snapshot(&targets);
+        std::fs::write(
+            &targets.yaml,
+            "schema: 1\ncv:\n  name: X\ndesign:\n  template: ./tpl\n",
+        )
+        .expect("re-point the template");
+
+        let mut seen = None;
+        catch_up(&mut targets, &mut before, &mut || {}, &mut |t| {
+            seen = t.template_dir.clone()
+        });
+        assert_eq!(
+            targets.template_dir,
+            Some(dir.path().join("tpl")),
+            "the YAML change re-derived the watch targets"
+        );
+        assert_eq!(
+            seen,
+            Some(dir.path().join("tpl")),
+            "the resync saw the new targets (watch registration follows them)"
+        );
+    }
+
+    #[test]
+    fn sync_template_watch_registers_existing_folders_and_moves_with_them() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (tx, _rx) = mpsc::channel();
+        let mut watcher = notify::recommended_watcher(tx).expect("watcher starts");
+        let mut watched = None;
+
+        // No custom template: nothing to register.
+        let built_in = WatchTargets {
+            yaml: dir.path().join("cv.yaml"),
+            yaml_dir: dir.path().to_path_buf(),
+            template_dir: None,
+        };
+        sync_template_watch(&mut watcher, &built_in, &mut watched);
+        assert_eq!(watched, None);
+
+        // Missing folder: not registered (its appearance wakes the loop later).
+        let mut custom = WatchTargets {
+            template_dir: Some(dir.path().join("tpl")),
+            ..built_in.clone()
+        };
+        sync_template_watch(&mut watcher, &custom, &mut watched);
+        assert_eq!(
+            watched, None,
+            "a folder that does not exist yet stays unwatched"
+        );
+
+        std::fs::create_dir(dir.path().join("tpl")).expect("create tpl");
+        sync_template_watch(&mut watcher, &custom, &mut watched);
+        assert_eq!(watched.as_deref(), Some(dir.path().join("tpl").as_ref()));
+
+        // A second sync with the same state is a no-op (no churn).
+        sync_template_watch(&mut watcher, &custom, &mut watched);
+        assert_eq!(watched.as_deref(), Some(dir.path().join("tpl").as_ref()));
+
+        // Moving the reference moves the registration; deleting it unregisters.
+        std::fs::create_dir(dir.path().join("tpl2")).expect("create tpl2");
+        custom.template_dir = Some(dir.path().join("tpl2"));
+        sync_template_watch(&mut watcher, &custom, &mut watched);
+        assert_eq!(watched.as_deref(), Some(dir.path().join("tpl2").as_ref()));
+
+        custom.template_dir = None;
+        sync_template_watch(&mut watcher, &custom, &mut watched);
+        assert_eq!(watched, None);
+    }
+
+    #[test]
+    fn nested_template_subdirectories_are_part_of_the_snapshot() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir_all(dir.path().join("tpl/lib")).expect("nested dir");
+        std::fs::write(dir.path().join("tpl/lib/inline.typ"), "one").expect("write");
+        let targets = WatchTargets {
+            yaml: temp_yaml(dir.path(), "schema: 1\ncv:\n  name: X\n"),
+            yaml_dir: dir.path().to_path_buf(),
+            template_dir: Some(dir.path().join("tpl")),
+        };
+        let before = snapshot(&targets);
+        std::fs::write(dir.path().join("tpl/lib/inline.typ"), "two").expect("edit nested");
+        assert!(
+            before.differs(&snapshot(&targets)),
+            "an edit deep in the folder must wake the rebuild"
+        );
+    }
+
+    #[test]
+    fn build_once_writes_the_pdf_and_survives_a_broken_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let yaml = temp_yaml(
+            dir.path(),
+            "schema: 1\ncv:\n  name: Watch Inner\ndesign:\n  template: compact\n",
+        );
+        let cli = Cli::try_parse_from(["cv", "--quiet", "build"]).expect("cli parses");
+        let build_args = BuildArgs {
+            file: yaml.clone(),
+            output: None,
+            no_fit: false,
+        };
+        build_once(&build_args, &cli);
+        assert!(
+            dir.path().join("cv.pdf").exists(),
+            "a valid file builds through the watch path"
+        );
+
+        // A broken file reports (stderr, swallowed here) and does not panic:
+        // exactly the property the watch loop relies on.
+        std::fs::write(&yaml, "schema: 1\ncv:\n  name: [unclosed\n").expect("break");
+        build_once(&build_args, &cli);
     }
 
     #[test]
@@ -403,6 +628,15 @@ mod tests {
                 .expect("canonical")
                 .join("cv.yaml")
         );
+    }
+
+    #[test]
+    fn absolute_input_falls_back_to_the_working_directory_for_a_bare_name() {
+        // `cv watch` with the default `cv.yaml` has no parent component; "."
+        // (the process working directory) is the anchor.
+        let resolved = absolute_input(Path::new("cv.yaml")).expect("cwd always exists");
+        assert_eq!(resolved.file_name().expect("has a name"), "cv.yaml");
+        assert!(resolved.is_absolute());
     }
 
     #[test]

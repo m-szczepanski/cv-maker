@@ -107,6 +107,29 @@ fn fitted_builds_are_deterministic() {
     );
 }
 
+/// Plan 5.1 (spec §7 fit contract, M5): every built-in honors it — the same
+/// overflowing content shrinks `classic` to one page exactly like `compact`.
+#[test]
+fn the_fit_loop_shrinks_classic_like_compact() {
+    let dir = unique_dir("fit-classic");
+    let classic = cv_yaml(14, 2) + "\ndesign:\n  template: classic\n";
+    fs::write(dir.join("cv.yaml"), classic).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["build", "--output", "classic.pdf"]);
+    assert!(ok, "classic fit build: {out}");
+    assert!(
+        out.contains("1 page"),
+        "classic must fit after shrinking, got: {out}"
+    );
+    let note = fit_note_of(&out);
+    assert!(
+        ["scale 0.", "spacing 0.", "margins 0."]
+            .iter()
+            .any(|prefix| note.contains(prefix)),
+        "at least one applied scale must be below 1.00, got: {note}"
+    );
+}
+
 /// Plan 4.5 / spec §7: what the loop reports never crosses the floors defined
 /// for the default design (font ≥ 8.5pt of 9.5pt, spacing ≥ 0.6, margins ≥ 1 cm).
 #[test]

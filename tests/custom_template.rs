@@ -16,6 +16,17 @@ fn unique_dir(name: &str) -> PathBuf {
     base
 }
 
+/// Make a file unreadable for the current user (POSIX permission model; the same
+/// assumption the init disk-fault tests make), and readable again after `f` so
+/// the temp directory stays deletable.
+fn unreadable<R>(path: &Path, f: impl FnOnce() -> R) -> R {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).expect("chmod 000");
+    let result = f();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).expect("chmod back");
+    result
+}
+
 fn run_cv(dir: &Path, args: &[&str]) -> (bool, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_cv"))
         .args(args)
@@ -278,6 +289,50 @@ fn non_utf8_template_source_is_a_clear_error() {
     assert!(
         out.contains("UTF-8") && out.contains("template.typ"),
         "the error must name the file and the encoding: {out}"
+    );
+}
+
+/// Unreadable folder files surface as typed I/O errors naming the file (same
+/// class as the `--font-path` and init disk-fault tests; POSIX permission model).
+#[test]
+fn an_unreadable_manifest_reports_a_typed_io_error() {
+    let dir = unique_dir("custom-unreadable-manifest");
+    make_folder(
+        &dir.join("my-template"),
+        &[
+            ("template.typ", SIMPLE_TYP),
+            ("manifest.yaml", &manifest(&[])),
+        ],
+    );
+    write_cv(&dir, "./my-template");
+    let (ok, out) = unreadable(&dir.join("my-template/manifest.yaml"), || {
+        run_cv(&dir, &["build"])
+    });
+    assert!(!ok, "an unreadable manifest must fail: {out}");
+    assert!(
+        out.contains("could not read") && out.contains("manifest.yaml"),
+        "a typed I/O error naming the file: {out}"
+    );
+}
+
+#[test]
+fn an_unreadable_template_source_reports_a_typed_io_error() {
+    let dir = unique_dir("custom-unreadable-source");
+    make_folder(
+        &dir.join("my-template"),
+        &[
+            ("template.typ", SIMPLE_TYP),
+            ("manifest.yaml", &manifest(&[])),
+        ],
+    );
+    write_cv(&dir, "./my-template");
+    let (ok, out) = unreadable(&dir.join("my-template/template.typ"), || {
+        run_cv(&dir, &["build"])
+    });
+    assert!(!ok, "an unreadable source must fail: {out}");
+    assert!(
+        out.contains("could not read") && out.contains("template.typ"),
+        "a typed I/O error naming the file: {out}"
     );
 }
 
