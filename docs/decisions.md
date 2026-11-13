@@ -8,7 +8,7 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
 
 - **Context:** Spec §2 says "Rust (stable, 2021 or 2024 edition), pin with `rust-toolchain.toml`".
 - **Decision:** `rust-toolchain.toml` pins `channel = "stable"` (not an exact version); the
-  crate uses edition 2024. CI installs the stable toolchain.
+  crate uses edition 2024.
 - **Rationale:** Pinning an exact rustc version would force manual toolchain bumps for routine
   fixes and is not needed for reproducibility (the PDF determinism requirement is about inputs,
   not rustc versions). Edition 2024 is fully stable and avoids a later migration.
@@ -37,7 +37,7 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
 - **Decision:** All commands from spec §3 exist as clap subcommands in M0. Unimplemented ones
   print `Error: cv <cmd> is not implemented yet` and exit 1. An integration test invokes the
   real binary via `env!("CARGO_BIN_EXE_cv")` and asserts on the help surface and stub exit codes.
-- **Consequences:** CI exercises the actual CLI surface in every run from M0 on.
+- **Consequences:** The CLI shape test exercises the actual binary surface from M0 on.
 
 ## ADR-0005 — Typst integration via `typst-as-lib` 0.17; Typst stack pinned 0.15.1 (plan 1.4.1)
 
@@ -141,6 +141,22 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   suppressed (they are essentials, not progress).
 - **Rationale:** Keeps stdout parseable when scripting; stderr keeps diagnostics out of
   redirected output.
+
+## ADR-0013 — No CI/CD pipeline (dropped plan 0.3, spec §12 M6 6.3)
+
+- **Context:** Plan 0.3 asked for a GitHub Actions workflow running the Gates on every
+  push/PR. The workflow existed, but GitHub could not run it: the account's Actions usage
+  is locked ("account is locked due to a billing issue" — an expired voucher). Every run
+  failed at the platform level, before any job started.
+- **Decision:** Remove `.github/workflows/ci.yml` entirely and drop CI/CD from the project
+  for now. The Gates (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+  `cargo test`) are run locally before any "done" declaration (see `AGENTS.md` working
+  rule 2). Release builds in M6 (plan 6.3) will be produced locally/manually.
+- **Rationale:** A permanently red pipeline is worse than none: it hides real signal.
+  Re-introducing CI later is a one-file change; the workflow definition is simple enough
+  to recreate exactly.
+- **Flag for reviewer:** If Actions access is restored, we can reinstate the pipeline
+  (possibly as a proposal in a future PR).
 
 ---
 
