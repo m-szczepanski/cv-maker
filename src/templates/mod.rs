@@ -164,6 +164,22 @@ mod tests {
     }
 
     #[test]
+    fn compact_template_ships_the_inline_helper() {
+        let template = load_builtin("compact").expect("compact must load");
+        assert!(
+            template
+                .extra_sources
+                .iter()
+                .any(|(path, _)| path == "lib/inline.typ"),
+            "inline Markdown helper must load as an extra source"
+        );
+        assert!(
+            template.main_source.contains("inline("),
+            "template must render Markdown fields through the helper"
+        );
+    }
+
+    #[test]
     fn unknown_template_gets_did_you_mean_hint() {
         let err = load_builtin("comapct").expect_err("typo'd name must fail");
         let msg = err.to_string();
