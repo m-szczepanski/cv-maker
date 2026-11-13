@@ -85,6 +85,44 @@ fn short_cv_is_not_shrunk() {
     );
 }
 
+/// Plan 4.4: `--no-fit` disables the loop for the run — an overflowing CV is
+/// written as-is, reports `scale 1.00`, and gets no floor warning.
+#[test]
+fn no_fit_flag_skips_the_loop() {
+    let dir = unique_dir("fit-nofit-flag");
+    fs::write(dir.join("cv.yaml"), cv_yaml(14, 2)).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["build", "--no-fit", "--output", "cv.pdf"]);
+    assert!(ok, "got: {out}");
+    assert!(
+        out.contains("2 pages") && out.contains("fit: scale 1.00"),
+        "disabled loop must write through the overflow, got: {out}"
+    );
+    assert!(
+        !out.contains("content still overflows"),
+        "no floor warning when the user opted out, got: {out}"
+    );
+    let pages = pdf_extract::extract_text_by_pages(dir.join("cv.pdf")).expect("text");
+    assert_eq!(pages.len(), 2);
+}
+
+/// Plan 4.4: the design field does the same permanently (spec §4/§7: the loop
+/// runs only when `design.fit_one_page` is true).
+#[test]
+fn design_fit_one_page_false_skips_the_loop() {
+    let dir = unique_dir("fit-design-off");
+    let yaml = cv_yaml(14, 2) + "\ndesign:\n  fit_one_page: false\n";
+    fs::write(dir.join("cv.yaml"), yaml).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
+    assert!(ok, "got: {out}");
+    assert!(
+        out.contains("2 pages") && out.contains("fit: scale 1.00"),
+        "design-level opt-out must skip shrinking, got: {out}"
+    );
+    assert!(!out.contains("content still overflows"), "got: {out}");
+}
+
 /// Plan 4.3 / ADR-0026: impossible content still writes the PDF and exits 0,
 /// with a warning stating the overflow and the suggestion; the success line
 /// shows the exact floors.
