@@ -89,7 +89,7 @@ fn init_exposes_its_flags() {
 
 #[test]
 fn unimplemented_commands_exit_non_zero_and_say_so() {
-    for args in [["templates"], ["fonts"], ["watch"]] {
+    for args in [["templates"], ["watch"]] {
         let output = cv().args(args).output().expect("binary runs");
         assert!(
             !output.status.success(),

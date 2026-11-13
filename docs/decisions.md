@@ -261,6 +261,31 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   (`jsonschema`) for a check strictly weaker than the typed parse — any document
   failing the schema fails `Document::from_yaml_str` too, since both share the model.
 
+## ADR-0021 — `cv fonts`: source column from three font books; names from metadata (plan 3.3)
+
+- **Context:** Plan 3.3 wants the available fonts listed "ideally marking source
+  (bundled / --font-path / system)". Typst's `FontBook` does not record where each
+  face came from once merged, and M2's `bundled_family_names` was a file-name
+  heuristic that would drift from the real metadata names (e.g. the variable Plex
+  build, where the static "SmBld" family-name split made file-name guesses wrong).
+- **Decision:** Build three minimal `TypstEngine` font books — user dirs only, bundled
+  only, and the full book (user + bundled + system via typst-kit; verified in the
+  pinned `typst-as-lib 0.17` source that system search only happens when
+  `search_fonts_with` is passed, so the two restricted books are exact). A family's
+  source label is its **winner** in ADR-0007 priority: font-path dirs → bundled →
+  system. Family names always come from the parsed font metadata (`FontBook::families`),
+  never from file names; the file-name heuristic is deleted. Output: one family per
+  line with a padded source column, grouped by source and sorted case-insensitively;
+  the listing counts as essential output, so `--quiet` keeps it (ADR-0012).
+- **Rationale:** Set-difference over books the renderer itself builds keeps listing,
+  validation and rendering on one ground truth; per-family classification by winner
+  matches what a build would actually load (a shadowed system font is not "available"
+  as itself).
+- **Consequences:** `available_font_families` (validation, plan 2.1) is now derived
+  from `available_fonts`, so the two cannot drift; a font book is built per source
+  on each `cv fonts`/`check`/`build` call — parsing the 19 embedded files twice costs
+  milliseconds and system discovery still runs once.
+
 ## Open questions (spec §14) — status
 
 Assigned to milestones per the implementation plan; each gets an ADR when resolved.

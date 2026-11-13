@@ -1,7 +1,8 @@
-//! Command handlers: `init`, `build` (M1); `check`, `schema` (M2); `watch` (M5).
+//! Command handlers: `init`, `build` (M1); `check`, `schema` (M2); `fonts` (M3).
 
 pub mod build;
 pub mod check;
+pub mod fonts;
 pub mod init;
 pub mod schema;
 

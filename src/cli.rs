@@ -45,7 +45,7 @@ pub enum Command {
     Templates,
     /// Print the JSON Schema (derived from the Rust model) to stdout (M2).
     Schema,
-    /// List fonts available to the tool: bundled and discovered (M3).
+    /// List fonts available to the tool: bundled, `--font-path` and system (spec §3).
     Fonts,
 }
 
@@ -111,7 +111,7 @@ pub fn run(cli: Cli) -> crate::error::Result<()> {
         Command::Check(args) => commands::check::run(args, &cli.font_path),
         Command::Templates => Err(unsupported(not_yet("templates"))),
         Command::Schema => commands::schema::run(),
-        Command::Fonts => Err(unsupported(not_yet("fonts"))),
+        Command::Fonts => commands::fonts::run(&cli.font_path),
     }
 }
 

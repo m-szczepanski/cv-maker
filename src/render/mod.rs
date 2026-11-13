@@ -28,7 +28,7 @@ use typst_pdf::{PdfOptions, PdfStandards};
 use crate::templates::Template;
 
 pub use data::{FitData, page_name};
-pub use fonts::{bundled_family_names, bundled_fonts};
+pub use fonts::{FontListing, FontSource, available_fonts, bundled_fonts};
 
 /// Everything needed to compile a CV once (plan 1.4.2).
 pub struct RenderRequest {

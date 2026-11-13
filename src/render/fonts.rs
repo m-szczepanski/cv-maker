@@ -5,8 +5,11 @@
 //! user directories → bundled fonts → system fonts. Explicit user intent wins;
 //! bundled fonts beat same-named system fonts so output stays reproducible across
 //! machines (spec §2 note).
+//!
+//! Family names come from the parsed font metadata (the same Typst font book a
+//! render uses), never from file names — see ADR-0021.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use include_dir::{Dir, include_dir};
 use typst_as_lib::{TypstEngine, typst_kit_options::TypstKitFontOptions};
@@ -37,32 +40,106 @@ pub fn bundled_fonts() -> Vec<(&'static str, &'static [u8])> {
     fonts
 }
 
-/// Family names provided by the bundled set (for `cv fonts` and validation in M2).
-pub fn bundled_family_names() -> Vec<String> {
-    bundled_fonts()
-        .iter()
-        .map(|(name, _)| display_name_from_file(name))
-        .collect()
+/// Where the compiler loads a font family from (spec §8 resolution order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FontSource {
+    /// A `--font-path` / `design.font_paths` directory (wins over the rest).
+    FontPath,
+    /// Embedded in the binary (wins over system fonts).
+    Bundled,
+    /// Discovered via typst-kit system font search.
+    System,
 }
 
-/// Every font family the compiler can resolve, in ADR-0007 priority order
-/// (user dirs → bundled → system), sorted and de-duplicated (plan 2.1, spec §5:
-/// "font family exists"). This is exactly the set Typst would match against at
-/// render time, so validation and rendering cannot disagree.
+impl FontSource {
+    /// Column label used by `cv fonts`.
+    pub fn label(self) -> &'static str {
+        match self {
+            FontSource::FontPath => "font-path",
+            FontSource::Bundled => "bundled",
+            FontSource::System => "system",
+        }
+    }
+}
+
+/// One font family and the source that wins for it (ADR-0007).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FontListing {
+    pub family: String,
+    pub source: FontSource,
+}
+
+/// Every font family available to the compiler, each labeled with its winning source
+/// (ADR-0007 priority: font-path dirs → bundled → system), grouped by source and
+/// sorted by name within each group.
+///
+/// This is exactly the set Typst would match against at render time, so validation,
+/// `cv fonts` and rendering cannot disagree.
+pub fn available_fonts(
+    user_font_dirs: &[PathBuf],
+) -> std::result::Result<Vec<FontListing>, RenderError> {
+    let user_items =
+        collect_font_dir_files(user_font_dirs).map_err(|e| RenderError::Font(e.to_string()))?;
+    let bundled_items: Vec<Vec<u8>> = bundled_fonts()
+        .iter()
+        .map(|(_, bytes)| bytes.to_vec())
+        .collect();
+
+    let user = book_families(user_items.clone(), None)?;
+    let bundled = book_families(bundled_items.clone(), None)?;
+
+    let mut all_items = user_items;
+    all_items.extend(bundled_items);
+    let available = book_families(all_items, Some(TypstKitFontOptions::new()))?;
+
+    let mut listings: Vec<FontListing> = available
+        .into_iter()
+        .map(|family| {
+            let source = if user.contains(&family) {
+                FontSource::FontPath
+            } else if bundled.contains(&family) {
+                FontSource::Bundled
+            } else {
+                FontSource::System
+            };
+            FontListing { family, source }
+        })
+        .collect();
+    listings.sort_by(|a, b| {
+        a.source
+            .cmp(&b.source)
+            .then_with(|| a.family.to_lowercase().cmp(&b.family.to_lowercase()))
+    });
+    Ok(listings)
+}
+
+/// Every font family the compiler can resolve (user dirs → bundled → system),
+/// sorted and de-duplicated (plan 2.1, spec §5: "font family exists").
 pub fn available_font_families(
     user_font_dirs: &[PathBuf],
 ) -> std::result::Result<Vec<String>, RenderError> {
-    let mut font_items: Vec<Vec<u8>> =
-        collect_font_dir_files(user_font_dirs).map_err(|e| RenderError::Font(e.to_string()))?;
-    font_items.extend(bundled_fonts().iter().map(|(_, bytes)| bytes.to_vec()));
+    Ok(available_fonts(user_font_dirs)?
+        .into_iter()
+        .map(|font| font.family)
+        .collect())
+}
 
-    // A minimal engine: same font setup as a real build (see `Engine::build`), with an
-    // empty main source — we only need the world's font book, never a compile.
-    let engine = TypstEngine::builder()
+/// The sorted, de-duplicated family list of a font book made of exactly these font
+/// file bytes, optionally extended by typst-kit system discovery.
+///
+/// The engine is only used for its font book — the `"main.typ"` source stays empty,
+/// nothing is ever compiled (same trick as [`available_fonts`]).
+fn book_families(
+    font_items: Vec<Vec<u8>>,
+    kit_options: Option<TypstKitFontOptions>,
+) -> std::result::Result<Vec<String>, RenderError> {
+    let mut builder = TypstEngine::builder()
         .with_static_source_file_resolver([("main.typ", "")])
-        .fonts(font_items)
-        .search_fonts_with(TypstKitFontOptions::new())
-        .build();
+        .fonts(font_items);
+    if let Some(options) = kit_options {
+        builder = builder.search_fonts_with(options);
+    }
+    let engine = builder.build();
 
     engine
         .with_world("main.typ", |world| {
@@ -76,23 +153,6 @@ pub fn available_font_families(
             families
         })
         .map_err(|e| RenderError::Font(format!("could not enumerate fonts: {e}")))
-}
-
-/// `Inter-Regular.ttf` → `Inter`; `JetBrainsMono-SemiBold.ttf` → `JetBrains Mono`.
-/// The Typst-facing family name is read from the font itself; this is only the display
-/// form used in listings until proper font metadata parsing lands (M3, `cv fonts`).
-fn display_name_from_file(path: &str) -> String {
-    let stem = Path::new(path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(path);
-    let family = stem.split('-').next().unwrap_or(stem);
-    // Split camel-case words: JetBrainsMono → JetBrains Mono, Inter stays Inter.
-    family
-        .replace("JetBrainsMono", "JetBrains Mono")
-        .replace("IBMPlexSans", "IBM Plex Sans")
-        .replace("IBMPlexMono", "IBM Plex Mono")
-        .replace("SourceSans3", "Source Sans 3")
 }
 
 /// Collect font files from user-provided directories (spec §8: `.ttf`/`.otf`).
@@ -130,65 +190,129 @@ pub fn collect_font_dir_files(dirs: &[PathBuf]) -> Result<Vec<Vec<u8>>> {
 mod tests {
     use super::*;
 
+    /// The five families spec §2 requires us to bundle.
+    const SPEC_FAMILIES: [&str; 5] = [
+        "Inter",
+        "JetBrains Mono",
+        "IBM Plex Sans",
+        "IBM Plex Mono",
+        "Source Sans 3",
+    ];
+
     #[test]
-    fn bundled_family_names_includes_the_bundled_set() {
-        let names = bundled_family_names();
-        // The five families of spec §2.
-        for expected in [
-            "Inter",
-            "JetBrains Mono",
-            "IBM Plex Sans",
-            "IBM Plex Mono",
-            "Source Sans 3",
-        ] {
-            assert!(
-                names.iter().any(|n| n == expected),
-                "bundled set must cover {expected}, got: {names:?}"
+    fn every_spec_family_is_available_and_marked_bundled() {
+        let fonts = available_fonts(&[]).expect("listing built");
+        for expected in SPEC_FAMILIES {
+            let found = fonts
+                .iter()
+                .find(|f| f.family == expected)
+                .unwrap_or_else(|| panic!("bundled set must cover {expected}, got: {fonts:?}"));
+            assert_eq!(
+                found.source,
+                FontSource::Bundled,
+                "{expected} must be served from the bundle without user dirs"
             );
         }
     }
 
-    /// The real gate: every spec §2 family must resolve *from the embedded font files'
-    /// metadata* (the same path a build takes), not just from their file names.
     #[test]
-    fn font_book_resolves_every_bundled_family() {
-        let families = available_font_families(&[]).expect("font book builds");
-        for expected in [
-            "Inter",
-            "JetBrains Mono",
-            "IBM Plex Sans",
-            "IBM Plex Mono",
-            "Source Sans 3",
-        ] {
-            assert!(
-                families.iter().any(|f| f == expected),
-                "font book must resolve {expected}, got: {families:?}"
-            );
-        }
+    fn family_names_come_from_font_metadata_not_file_names() {
+        // `IBMPlexSans-Var-Roman.ttf` is served under its typographic family, the
+        // suffix-trimmed `IBM Plex Sans` — a file-name heuristic would say otherwise.
+        let items: Vec<Vec<u8>> = bundled_fonts().iter().map(|(_, b)| b.to_vec()).collect();
+        let families = book_families(items, None).expect("bundled book builds");
+        assert!(families.iter().any(|f| f == "IBM Plex Sans"));
+        assert!(
+            !families
+                .iter()
+                .any(|f| f.contains("Var") || f.contains("SmBld")),
+            "no file-name or intermediate-weight artifacts in the bundled book: {families:?}"
+        );
+    }
+
+    #[test]
+    fn user_dir_font_shadows_the_bundled_family() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let inter = bundled_fonts()
+            .iter()
+            .find(|(name, _)| *name == "Inter-Regular.ttf")
+            .map(|(_, bytes)| *bytes)
+            .expect("Inter is bundled");
+        std::fs::write(dir.path().join("my-inter.ttf"), inter).expect("write font copy");
+
+        let fonts = available_fonts(&[dir.path().to_path_buf()]).expect("listing built");
+        let inter = fonts
+            .iter()
+            .find(|f| f.family == "Inter")
+            .expect("Inter listed");
+        assert_eq!(
+            inter.source,
+            FontSource::FontPath,
+            "the user dir copy wins (ADR-0007)"
+        );
+    }
+
+    #[test]
+    fn unparsable_font_files_are_skipped_without_failing_the_listing() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("fake.ttf"), b"not a real font").expect("write fake");
+
+        let fonts = available_fonts(&[dir.path().to_path_buf()]).expect("listing built");
+        assert!(
+            fonts.iter().any(|f| f.family == "Inter"),
+            "bundled fonts still list despite a garbage font file"
+        );
+    }
+
+    /// The validation contract (plan 2.1): `available_font_families` must accept every
+    /// family the listing shows and only those — validation and `cv fonts` agree.
+    /// If either side ever filters or sorts differently, this catches the drift.
+    #[test]
+    fn validation_accepts_exactly_the_listed_families() {
+        let fonts = available_fonts(&[]).expect("listing built");
+        let accepted = available_font_families(&[]).expect("families built");
+        assert_eq!(
+            accepted,
+            fonts.iter().map(|f| f.family.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn listings_are_grouped_by_source_then_sorted_by_name() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let inter = bundled_fonts()
+            .iter()
+            .find(|(name, _)| *name == "Inter-Regular.ttf")
+            .map(|(_, bytes)| *bytes)
+            .expect("Inter is bundled");
+        std::fs::write(dir.path().join("inter.ttf"), inter).expect("write copy");
+
+        let fonts = available_fonts(&[dir.path().to_path_buf()]).expect("listing built");
+        let sources: Vec<FontSource> = fonts.iter().map(|f| f.source).collect();
+        let mut grouped = sources.clone();
+        grouped.sort_unstable(); // FontSource Ord = priority order
+        assert_eq!(
+            sources, grouped,
+            "grouped by source (font-path → bundled → system)"
+        );
+        let bundled = fonts
+            .iter()
+            .filter(|f| f.source == FontSource::Bundled)
+            .map(|f| f.family.to_lowercase())
+            .collect::<Vec<_>>();
+        let mut sorted = bundled.clone();
+        sorted.sort();
+        assert_eq!(bundled, sorted, "sorted by family name within a source");
     }
 
     #[test]
     fn bundled_fonts_are_sorted_by_file_name() {
         let fonts = bundled_fonts();
         assert!(!fonts.is_empty(), "fonts/ must ship at least one font");
-        let mut names: Vec<&str> = fonts.iter().map(|(n, _)| *n).collect();
+        let names: Vec<&str> = fonts.iter().map(|(n, _)| *n).collect();
         let mut sorted = names.clone();
         sorted.sort_unstable();
-        names.sort_unstable();
         assert_eq!(names, sorted, "deterministic order (ADR-0007)");
-    }
-
-    #[test]
-    fn display_names_derive_from_file_stems() {
-        assert_eq!(display_name_from_file("Inter-Regular.ttf"), "Inter");
-        assert_eq!(
-            display_name_from_file("JetBrainsMono-Bold.ttf"),
-            "JetBrains Mono"
-        );
-        assert_eq!(
-            display_name_from_file("IBMPlexSans-Medium.otf"),
-            "IBM Plex Sans"
-        );
     }
 
     #[test]
@@ -227,5 +351,12 @@ mod tests {
             err.to_string().contains("fake.ttf"),
             "error names it: {err}"
         );
+    }
+
+    #[test]
+    fn font_source_labels_are_the_cv_fonts_columns() {
+        assert_eq!(FontSource::FontPath.label(), "font-path");
+        assert_eq!(FontSource::Bundled.label(), "bundled");
+        assert_eq!(FontSource::System.label(), "system");
     }
 }
