@@ -87,21 +87,6 @@ fn init_exposes_its_flags() {
     }
 }
 
-#[test]
-fn unimplemented_commands_exit_non_zero_and_say_so() {
-    // Only `watch` remains stubbed while `cv watch` lands (plan 5.6).
-    let output = cv().args(["watch"]).output().expect("binary runs");
-    assert!(
-        !output.status.success(),
-        "`cv watch` must not pretend to succeed"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("not implemented yet"),
-        "`cv watch` must state it is unimplemented; stderr:\n{stderr}"
-    );
-}
-
 /// Plan 5.5 (spec §3): `cv templates` lists the built-ins with one-line descriptions.
 #[test]
 fn templates_lists_builtins_with_descriptions() {

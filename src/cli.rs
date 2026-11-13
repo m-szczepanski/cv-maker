@@ -107,20 +107,10 @@ pub fn run(cli: Cli) -> crate::error::Result<()> {
     match &cli.command {
         Command::Init(args) => commands::init::run(args),
         Command::Build(args) => commands::build::run(args, &cli),
-        Command::Watch(_) => Err(unsupported(not_yet("watch"))),
+        Command::Watch(args) => commands::watch::run(args, &cli),
         Command::Check(args) => commands::check::run(args, &cli.font_path),
         Command::Templates => commands::templates::run(),
         Command::Schema => commands::schema::run(),
         Command::Fonts => commands::fonts::run(&cli.font_path),
     }
-}
-
-fn not_yet(name: &str) -> String {
-    format!(
-        "cv {name} is not implemented yet (see docs/implementation-plan.md for the milestone schedule)"
-    )
-}
-
-fn unsupported(message: String) -> crate::error::Error {
-    crate::error::Error::Unsupported(message)
 }

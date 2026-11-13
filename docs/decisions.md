@@ -479,6 +479,45 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   manifest that lies (either direction) gets explained in `cv check` output with a
   span on the `design.template` line.
 
+## ADR-0029 — Watch rebuilds on content snapshots, not event paths (plan 5.6)
+
+- **Context:** Spec §3: `cv watch` rebuilds on change of the YAML *or its custom
+  template files*, printing each build's result; spec §2 wants `notify` debounced.
+  Ambiguities: which events count as a change (backends differ: FSEvents coalesces
+  bursts and reports folder-level paths, inotify is per-file; atomic PDF writes land
+  in the same directory as the YAML and would echo back), how to debounce without a
+  second crate (`.AGENTS.md` 22), and what ends the loop.
+- **Decision:** Events are only a *wake* signal. After the queue goes quiet for
+  100 ms (drain-until-quiet, implemented directly over `notify`'s channel — no
+  debouncer crate), the loop hashes the watched inputs — the YAML and, when
+  `design.template` is a path reference, every file under that folder (a
+  missing folder is itself one tracked state) — and rebuilds only when the
+  snapshot differs from the one recorded before the last build, re-checking after
+  each build (a save landing mid-build is caught up, so the PDF always converges
+  to the newest content). Because our own PDF/temp writes are not in the snapshot,
+  they can never cause a rebuild loop. Watch registration: the YAML's directory
+  (non-recursive; missing YAML files still watch) plus the custom template folder
+  recursively, re-synced whenever a rebuild was triggered by a YAML change (the
+  reference may move). Each rebuild is a verbatim `cv build` run: same result line,
+  same warnings, same exit-code-neutral overflow report. Build errors print and
+  the loop continues — the watched file is the one being edited. Startup: build
+  once, then watch; `--quiet` drops the progress banner and the result lines
+  (ADR-0012) but not errors/warnings. Ctrl-C (default signal handling) ends the
+  session; v1 ships no graceful-shutdown plumbing. A missing input *directory*
+  fails at startup naming it.
+- **Rationale:** Trusting event paths for the *decision* would couple correctness
+  to backend quirks; content snapshots are backend-independent, dedupe editor
+  bursts without timers, make missed events self-healing (the next wake rebuilds
+  whatever is actually on disk), and make the rebuild-equality logic unit-testable
+  without sleeping (rule 18). The catch-up loop guarantees convergence rather than
+  "exactly one build per event", which is strictly better to watch.
+- **Consequences:** A rebuild costs one content hash pass over a handful of small
+  files (~µs). Creating a missing template folder inside the YAML directory wakes
+  the watched dir itself, so the catch-up loop rebuilds and the sync registers the
+  new folder in the same pass. The `Burst::Disconnected` arm (channel died while
+  the watcher is alive) is unreachable from user input — it reports an internal
+  error rather than silently exiting.
+
 ## Open questions (spec §14) — status
 
 Assigned to milestones per the implementation plan; each gets an ADR when resolved.

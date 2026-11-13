@@ -15,8 +15,9 @@
 //! - I/O (missing file): this file.
 //! - write errors: `tests/build_examples.rs` (output is a directory).
 //! - template errors (labeled distinctly from user errors): this file (`cv build`).
-//! - unsupported stub commands / unknown `--template` for `init`: `tests/cli.rs` and
-//!   `tests/init.rs`.
+//! - custom template folder errors: `tests/custom_template.rs`.
+//! - unknown `--template` for `init`: `tests/init.rs`.
+//! - watch loop errors: `tests/watch.rs`.
 
 use std::fs;
 use std::path::PathBuf;

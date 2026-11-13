@@ -7,6 +7,7 @@ pub mod fonts;
 pub mod init;
 pub mod schema;
 pub mod templates;
+pub mod watch;
 
 use std::path::{Path, PathBuf};
 
