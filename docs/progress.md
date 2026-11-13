@@ -5,10 +5,10 @@ this file only records what is done. Mark a task `[x]` only when it is implement
 the Gates pass (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
 `cargo test` — run locally, ADR-0013). Strikethrough tasks are dropped decisions.
 
-- **Current state:** M4 implemented — all tasks done, Gates green; M4 ready for
+- **Current state:** M5 implemented — all tasks done, Gates green; M5 ready for
   review/merge. The M1 visual check (1.7.4) and the M1/M2 review stops are still open.
 
-## Milestone 0 — Project bootstrap ✅
+## Milestone 0 — Project bootstrap 
 
 - [x] 0.1 Repository skeleton (spec §10 layout)
 - [x] 0.2 Dependencies in `Cargo.toml` with justifications
@@ -106,20 +106,46 @@ fully covered — the first coverage pass flagged three reachable gaps (`body: 0
 floor guard, the Phase-A floor-probe return, the verbose telemetry line), closed by
 tests in this commit.
 
-## Milestone 5 — Templates and watch
+## Milestone 5 — Templates and watch 🔜 review
 
-- [ ] 5.1 `classic` template
-- [ ] 5.2 `sidebar` template (optional)
-- [ ] 5.3 Custom template folders
-- [ ] 5.4 Manifest validation for custom templates
-- [ ] 5.5 `cv templates`
-- [ ] 5.6 `cv watch`
-- [ ] 5.7 Custom-template and watch tests
-- [ ] 5.8 Human visual review of `classic`
+- [x] 5.1 `classic` template (header rule + section dividers; all four section
+      types; all six design groups; same fit contract as `compact` — pinned by
+      `the_fit_loop_shrinks_classic_like_compact` and the built-in parity tests)
+- [x] 5.2 ~~`sidebar` template~~ — dropped (optional per spec; acceptance needs
+      custom templates, not a third unreviewed visual)
+- [x] 5.3 Custom template folders (`design.template: ./my-template`, resolved
+      against the CV file; pure by construction — no fs/package resolver; ADR-0027)
+- [x] 5.4 Manifest validation (required fields via serde; usability — version +
+      non-empty identity — on every load; declared-vs-reads warnings for custom
+      templates; built-in agreement pinned by unit tests; ADR-0028)
+- [x] 5.5 `cv templates` (aligned built-in listing; `init --template` now writes
+      the chosen name — ADR-0011 amendment)
+- [x] 5.6 `cv watch` (notify + drain-until-quiet debounce; content-snapshot dedupe
+      so PDF writes can't loop; catch-up rebuild; target re-derivation; ADR-0029)
+- [x] 5.7 Custom-template and watch tests (`tests/custom_template.rs`,
+      `tests/watch.rs`; every user-facing template-load error class has a test)
+- [x] 5.8 **Human visual review of `classic`** — starter (A4 + letter/red), the
+      `full` example, and a 14×2 overflowing CV fitted to one page were rendered;
+      agent inspection plus human pass 2026-11-13, approved. One reviewer note:
+      the full-width divider lines in the templates are too heavy for taste —
+      deferred to a later styling pass (see M6 note below).
+
+M6 reviewer note (carried from the 5.8 pass): soften/remove the full-width
+`line()` dividers in the built-in templates (header rule + section dividers) —
+reviewer would like them lighter or gone; treat as template styling polish, not
+a schema/contract change.
+
+Measured coverage (`cargo llvm-cov`, end of M5): 96.6% lines. The residual
+uncovered lines are the documented defensive classes (unreachable embedded assets,
+span-scan fallbacks, disk-failure paths) plus the Typst-warning loop, now reached
+by a custom template. The `cv watch` `run` glue reads as 0% only because llvm-cov
+cannot collect the profile of the SIGKILLed e2e subprocess; every decision it makes
+(wake, snapshot equality, catch-up convergence, target re-pointing, watch sync) is
+unit-tested in `src/commands/watch.rs` (see its coverage note).
 
 ## Milestone 6 — Polish and release
 
-- [ ] 6.1 README (quick start, flags, exit codes)
+- [ ] 6.1 README (quick start, how to use, flags, exit codes) - it has be user centric and good fit for github
 - [ ] 6.2 Close all §14 open questions
 - [ ] 6.3 Release builds for Linux, macOS (x64 + arm64), Windows — locally, no CI
       (ADR-0013)

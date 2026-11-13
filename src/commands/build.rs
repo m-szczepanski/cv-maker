@@ -17,7 +17,10 @@ pub fn run(args: &BuildArgs, cli: &Cli) -> Result<()> {
     let loaded = crate::commands::load_cv(&args.file, &cli.font_path)?;
     let document = loaded.document;
 
-    let template = crate::templates::load_builtin(&document.design.template)?;
+    // A built-in name or a custom folder path (relative to the YAML file, ADR-0027);
+    // `load_cv` already validated it, so this reload only fetches the sources.
+    let base_dir = args.file.parent().unwrap_or(Path::new("."));
+    let template = crate::templates::load(&document.design.template, base_dir)?;
 
     let data_yaml = render::data::to_yaml(&document.cv, &document.design)?;
     let request = RenderRequest {

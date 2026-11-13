@@ -1,10 +1,13 @@
-//! Command handlers: `init`, `build` (M1); `check`, `schema` (M2); `fonts` (M3).
+//! Command handlers: `init`, `build` (M1); `check`, `schema` (M2); `fonts` (M3);
+//! `templates`, `watch` (M5).
 
 pub mod build;
 pub mod check;
 pub mod fonts;
 pub mod init;
 pub mod schema;
+pub mod templates;
+pub mod watch;
 
 use std::path::{Path, PathBuf};
 
@@ -55,7 +58,8 @@ pub fn load_cv(file: &Path, font_paths: &[PathBuf]) -> Result<LoadedCv> {
         font_dirs.push(resolve_relative(file, rel));
     }
 
-    let validation = crate::validate::validate(&yaml, &name, &document, &font_dirs);
+    let base_dir = file.parent().unwrap_or(Path::new("."));
+    let validation = crate::validate::validate(&yaml, &name, &document, &font_dirs, base_dir);
     if !validation.is_ok() {
         return Err(Error::Input {
             diagnostics: validation.errors,

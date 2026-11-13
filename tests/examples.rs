@@ -96,6 +96,56 @@ fn markdown_markers_do_not_leak_into_the_pdf_text() {
     fs::remove_file(&pdf_path).expect("clean up test pdf");
 }
 
+/// Spec §11: every example builds with every built-in template, one page, with the
+/// expected text (the classic template joined compact in M5).
+#[test]
+fn every_example_builds_with_every_builtin_template() {
+    let base = std::env::temp_dir().join(format!("cv-examples-all-{}", std::process::id()));
+    fs::remove_dir_all(&base).ok();
+    fs::create_dir_all(&base).expect("create test dir");
+
+    for file in ["minimal.yaml", "full.yaml"] {
+        let src = fs::read_to_string(examples_dir().join(file)).expect("read example");
+        for template in cv::templates::builtin_names() {
+            // full.yaml pins `template: compact`; rewrite it. minimal.yaml has no
+            // design block at all; append one.
+            let yaml = if src.contains("template:") {
+                src.lines()
+                    .map(|line| {
+                        if line.trim_start().starts_with("template:") {
+                            format!("  template: {template}")
+                        } else {
+                            line.to_owned()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    + "\n"
+            } else {
+                format!("{src}\ndesign:\n  template: {template}\n")
+            };
+            let yaml_path = base.join(file);
+            fs::write(&yaml_path, yaml).expect("write patched example");
+
+            let out = format!("{file}.{template}.pdf");
+            let (ok, _, stderr) = run(&base, &["build", file, "--output", &out]);
+            assert!(
+                ok,
+                "`cv build {file}` with 'template: {template}' failed:\n{stderr}"
+            );
+
+            let pages = pdf_extract::extract_text_by_pages(base.join(&out)).expect("extract");
+            assert_eq!(pages.len(), 1, "{file} via '{template}' must fit one page");
+            assert!(
+                pages.concat().contains("Jane Doe"),
+                "{file} via '{template}' must contain the name"
+            );
+            fs::remove_file(base.join(&out)).expect("clean up");
+        }
+    }
+    fs::remove_dir_all(&base).ok();
+}
+
 /// The derived JSON Schema is pinned byte-for-byte (plan 2.8, ADR-0019).
 #[test]
 fn schema_output_matches_snapshot() {

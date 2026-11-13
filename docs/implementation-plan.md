@@ -224,29 +224,86 @@ are the review-sensitive parts.
 
 ---
 
-## Milestone 5 — Templates and watch
+## Milestone 5 — Templates and watch (working plan, M4 review merged)
 
-Goal: `classic` template, custom template folders, `cv templates`, `cv watch`.
+Goal (spec §12 M5): `classic` template, custom template folders, manifest checks,
+`cv templates`, `cv watch`. **Accept:** a user copies a built-in template folder, edits
+it, and uses it via `design.template: ./my-template`.
 
-- [ ] 5.1 `classic` template: header rule, section dividers; same contract and manifest rules
-      as `compact`; supports all section types; honors its declared design fields.
-- [ ] 5.2 (Optional per spec) `sidebar` template — only if time permits and it can look good;
-      skip without ceremony otherwise.
-- [ ] 5.3 Custom templates: `design.template` accepts a built-in name or a relative folder
-      path (`./my-template`). Same contract: `template.typ`, `manifest.yaml`; pure (no network,
-      no reads outside their folder — enforce in the World impl).
-- [ ] 5.4 Manifest validation for custom templates: name/description/schema version present;
-      declared supported options consistent with what the template reads.
-- [ ] 5.5 `cv templates`: list built-ins with one-line descriptions.
-- [ ] 5.6 `cv watch`: rebuild on change of the YAML **or its custom template folder**
-      (`notify`, debounced); print each build result line. Watch custom template folder per
-      spec §6.
-- [ ] 5.7 Tests: custom template end-to-end (copy built-in, tweak, build); watch test with a
-      temp dir (file-change simulation); manifest-missing → clear error.
-- [ ] 5.8 Visual review of `classic` (human).
+Branch: `feature/m5-template-and-watch`. Typst types stay confined to `src/render/`: the
+template loader and the watch loop only handle our own types (`Template`, `RenderOutput`).
+The `notify` API is used per its pinned 8.2.2 docs (verified, rule 6), not from memory.
 
-**Accept (spec M5):** user copies a built-in template folder, edits it, uses it via
-`design.template: ./my-template`.
+### Design decisions (each becomes an ADR)
+
+**ADR-0027 — Template references and custom loading.** `design.template` is either a
+built-in name or a path: the reference is a path when it contains `/` or `\` or starts
+with `.` (`./my-template`, `../x`, `/abs/x`); anything else must name a built-in, so a
+typo like `compactt` keeps its span-labeled "did you mean" diagnostic (snapshot-pinned).
+Path references resolve against the YAML file's directory. The loader reads
+`manifest.yaml` + `template.typ` + every `**/*.typ` in the folder into the same in-memory
+`Template` shape built-ins use, so `src/render/` does not change. Purity (spec §6: no
+network, no reads outside the folder) is enforcement by construction: the Typst world
+only ever sees the virtual files the tool loaded, and the typst-as-lib package resolver
+(network + fs cache) is never configured — a `@preview` import fails as a template error.
+Missing folder / missing `template.typ` / missing or invalid `manifest.yaml` / non-UTF-8
+sources are user-facing errors naming the folder and the file (each with a test).
+
+**ADR-0028 — Manifest validation.** `name`, `description`, `schema_version` are required
+by the serde type (unknown keys rejected). A template is only usable when `name` and
+`description` are non-empty and `schema_version` is a version the tool understands (1),
+checked on every load — mirrors the CV-level schema-version check. The plan's
+"declared supported options consistent with what the template reads" is a heuristic run
+for **custom templates only** (built-ins are pinned by unit tests instead, so shipped
+templates can never gain new warnings): per design group, compare the manifest's
+`supported` list against whether the sources contain `design.<group>`. A mismatch either
+way is a warning (ADR-0015 class) at the `design.template` span.
+
+**ADR-0029 — Watch semantics.** `cv watch` builds once at start, then loops: block on
+the notify channel, drain events until 100 ms of quiet (the debounce), take a content
+snapshot (per-file hash) of the YAML and the custom template folder, and rebuild only
+when the snapshot actually changed. Event *paths* are not trusted to identify what
+changed (FSEvents coalesces; inotify does not) — the snapshot does, which also kills any
+rebuild loop from our own atomic PDF writes. A YAML-content change additionally
+re-derives the watch set (the manifest reference may now point elsewhere) and
+re-registers the watcher. Every iteration reuses `cv build`'s code path verbatim
+(result line, warnings, exit-code-neutral overflow warning); build/render errors are
+reported and never stop the loop — the user is editing the very file that is broken.
+Ctrl-C (default signal handling) stops watching; no graceful-shutdown plumbing in v1.
+
+**ADR-0011 amendment.** `cv init --template <name>` now writes the chosen built-in name
+into the starter's `design.template` instead of always `compact` — with a second built-in
+the flag has to select the template or it lies. It still accepts built-in names only.
+
+### Tasks → commits
+
+| # | Deliverable |
+|---|---|
+| 5.1 | `templates/classic/` (header rule, section dividers, all four section types, all six design groups, fit-scale contract identical to `compact`) + manifest + built-in parity unit tests + every-example-every-builtin build test (spec §11) |
+| 5.2 | ~~`sidebar` template~~ — dropped: spec makes it optional ("skip without ceremony"), M5 acceptance does not need it, and a template nobody reviewed visually is liability, not feature |
+| 5.3 | Reference grammar + `templates::load(reference, base)` dispatch + disk loader + `Error::TemplateLoad` + validation/build integration + ADR-0027; custom-template e2e suite (copy, tweak, build; every load error class) |
+| 5.4 | Manifest usability checks (version, non-empty name/description) + declared-vs-reads warnings for custom templates + ADR-0028; tests |
+| 5.5 | `cv templates` listing (padded columns like `cv fonts`) + `init --template` wiring + CLI surface test updates |
+| 5.6 | `src/commands/watch.rs`: notify glue, quiet-period drain, content-snapshot dedupe, watch-set re-derivation + ADR-0029; unit tests for the snapshot/relevance logic |
+| 5.7 | `tests/watch.rs` e2e: YAML edit triggers rebuild; custom-template edit triggers rebuild (bounded blocking reads, no sleeps) |
+| 5.8 | Visual review of `classic`: render starter + examples, inspect, hand the PDFs to the human reviewer |
+
+### Files touched
+
+- new: `templates/classic/`, `src/commands/templates.rs`, `src/commands/watch.rs`,
+  `tests/custom_template.rs`, `tests/watch.rs`
+- changed: `src/templates/mod.rs`, `src/templates/manifest.rs`, `src/error.rs`,
+  `src/validate/mod.rs`, `src/commands/{mod,build,init}.rs`, `src/cli.rs`,
+  `src/lib.rs`(nothing expected), `tests/cli.rs`, docs
+- risk notes for the human reviewer: `classic` visual quality (spec §13 reviewer note —
+  tests do not prove it looks good); the watch loop's termination/rebuild-equality
+  story; the custom-template error taxonomy.
+
+### Gates
+
+`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` per
+commit; `cargo llvm-cov` at milestone end; no new crate dependencies (`notify` shipped
+from M0 for exactly this task).
 
 ---
 
@@ -259,13 +316,11 @@ Goal: README, exit codes, release binaries.
       (including the fit-overflow code decided in 4.3).
 - [ ] 6.2 Finalize `docs/decisions.md`: every §14 open question answered or explicitly
       deferred, each with a short rationale.
-- [ ] 6.3 ~~Release CI~~ — adjusted (ADR-0013): release builds for Linux, macOS (x64 + arm64),
-      Windows are produced locally/manually. Verify each artifact
-      runs on a clean machine (no Typst install, no fonts install needed — bundled assets
-      must make the binary self-sufficient).
-- [ ] 6.4 Fresh-machine test: download a release binary, run the quick start end-to-end.
-- [ ] 6.5 Full audit pass against the spec: walk §3–§11 section by section and confirm each
+- [ ] 6.3 Fresh-machine test: download a release binary, run the quick start end-to-end.
+- [ ] 6.4 Full audit pass against the spec: walk §3–§11 section by section and confirm each
       requirement has an implementation and (where applicable) a test. Fix or file gaps.
+- [ ] 6.5 Review the code if it comes to code comments and code quality.
+- [ ] Remove the horizontal line dividers in templates as we do not want that as our templates should be very clean, minimal and slick.
 
 **Accept (spec M6):** a fresh machine can run the quick start using only the downloaded binary.
 

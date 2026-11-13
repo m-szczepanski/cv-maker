@@ -167,6 +167,13 @@ pub enum Error {
     #[error("{0}")]
     Unsupported(String),
 
+    /// A template folder or built-in asset could not be loaded (plan 5.3, ADR-0027):
+    /// missing folder, missing `template.typ` or `manifest.yaml`, invalid or unusable
+    /// manifest, non-UTF-8 source. `name` is the reference as the user wrote it, so the
+    /// message always matches the typed value.
+    #[error("template '{name}': {message}")]
+    TemplateLoad { name: String, message: String },
+
     /// An internal invariant failed (unexpected serialization failure, malformed built-in
     /// assets). User-visible so it is distinguishable from input errors; never silently
     /// swallowed.

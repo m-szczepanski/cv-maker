@@ -2,19 +2,22 @@
 //!
 //! The typed model parse (serde) already rejects unknown keys, wrong types and malformed
 //! lengths/colors — those surface as parse-time diagnostics. This module runs afterwards
-//! and checks *values*: schema version, template existence, font families, link URLs,
-//! duplicate section titles, and design fields the chosen template declares unsupported
-//! (plan 3.5). All errors of all checks are collected, not just the first (spec §5).
+//! and checks *values*: schema version, template reference (built-in name or custom
+//! folder, plan 5.3), font families, link URLs, duplicate section titles, and design
+//! fields the chosen template declares unsupported (plan 3.5) or whose manifest
+//! contradicts the template sources (plan 5.4). All errors of all checks are collected,
+//! not just the first (spec §5).
 
 pub mod spans;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use miette::Severity;
 
-use crate::error::Diag;
+use crate::error::{Diag, Error};
 use crate::model::{Cv, Design, Document};
 use crate::suggest::closest_match;
+use crate::templates::manifest::DESIGN_GROUPS;
 
 /// Result of validating one YAML file: errors fail the build, warnings do not (ADR-0015).
 #[derive(Debug, Default)]
@@ -33,34 +36,24 @@ impl ValidationResult {
 ///
 /// `yaml_source` is needed for span lookup (ADR-0014); `source_name` is the file name
 /// shown in diagnostic snippets. `font_dirs` are the user font directories
-/// (`--font-path` + `design.font_paths`, relative to the input file).
+/// (`--font-path` + `design.font_paths`, relative to the input file). `base_dir` is the
+/// input file's directory, the anchor for custom template path references (ADR-0027).
 pub fn validate(
     yaml_source: &str,
     source_name: &str,
     document: &Document,
     font_dirs: &[PathBuf],
+    base_dir: &Path,
 ) -> ValidationResult {
     let spans = spans::scalar_spans(yaml_source);
     let source = miette::NamedSource::new(source_name, yaml_source.to_owned());
     let mut result = ValidationResult::default();
 
     check_schema_version(document.schema, &spans, &source, &mut result);
-    check_template(&document.design, &spans, &source, &mut result);
+    check_template(&document.design, base_dir, &spans, &source, &mut result);
     check_fonts(&document.design, font_dirs, &spans, &source, &mut result);
     check_urls(&document.cv, &spans, &source, &mut result);
     check_duplicate_titles(&document.cv, &spans, &source, &mut result);
-    // Manifest enforcement needs the template's declaration; an unknown template has
-    // already been reported as an error by `check_template`, so a load failure here
-    // is not a second diagnostic.
-    if let Ok(template) = crate::templates::load_builtin(&document.design.template) {
-        check_manifest_support(
-            &template.name,
-            &template.supported_options,
-            &spans,
-            &source,
-            &mut result,
-        );
-    }
 
     result
 }
@@ -100,34 +93,73 @@ fn check_schema_version(
     }
 }
 
+/// Validate the `design.template` reference and the loaded template's manifest.
+///
+/// Bare names must hit a built-in: that mistake keeps its snapshot-pinned "did you
+/// mean" diagnostic (ADR-0027) and skips the manifest checks (the unknown-template
+/// error already covers it). Path references are loaded from disk; any load failure
+/// is a user-facing error labeled at `design.template`. On success the manifest
+/// support enforcement (plan 3.5, ADR-0023) runs, and for custom templates also the
+/// manifest-vs-reads consistency check (plan 5.4, ADR-0028).
 fn check_template(
     design: &Design,
+    base_dir: &Path,
     spans: &spans::SpanMap,
     source: &miette::NamedSource<String>,
     result: &mut ValidationResult,
 ) {
-    let name = &design.template;
-    if crate::templates::builtin_names()
-        .iter()
-        .any(|known| known == name)
-    {
-        return;
-    }
-    let known = crate::templates::builtin_names();
-    let message = format!("unknown template '{name}'");
-    let diag = labeled(
+    let reference = &design.template;
+    let template = match crate::templates::load(reference, base_dir) {
+        Ok(template) => template,
+        Err(err) => {
+            // A bare unknown name keeps the dedicated did-you-mean message; a path
+            // reference reports the loader's reason (folder/manifest/entry point).
+            let message = match &err {
+                Error::Unsupported(_) if !crate::templates::is_path_like(reference) => {
+                    format!("unknown template '{reference}'")
+                }
+                other => other.to_string(),
+            };
+            // The plain fallback cannot run when the typed parse succeeded: a scalar
+            // at `design.template` is always in the span map (same invariant as
+            // `check_schema_version`).
+            let diag = labeled(
+                spans,
+                source,
+                "design.template",
+                message.clone(),
+                "this template name",
+            )
+            .unwrap_or_else(|| Diag::plain(message, Severity::Error));
+            let diag = if crate::templates::is_path_like(reference) {
+                diag.with_help(
+                    "a custom template is a folder with template.typ and manifest.yaml, referenced relative to the YAML file",
+                )
+            } else {
+                let known = crate::templates::builtin_names();
+                match closest_match(reference, &known) {
+                    Some(best) => diag.with_help(format!("did you mean '{best}'?")),
+                    None => diag.with_help(format!(
+                        "available templates: {} (or a folder path like './my-template')",
+                        known.join(", ")
+                    )),
+                }
+            };
+            result.errors.push(diag);
+            return;
+        }
+    };
+
+    check_manifest_support(
+        &template.name,
+        &template.supported_options,
         spans,
         source,
-        "design.template",
-        message,
-        "this template name",
-    )
-    .unwrap_or_else(|| Diag::plain(format!("unknown template '{name}'"), Severity::Error));
-    let diag = match closest_match(name, &known) {
-        Some(best) => diag.with_help(format!("did you mean '{best}'?")),
-        None => diag.with_help(format!("available templates: {}", known.join(", "))),
-    };
-    result.errors.push(diag);
+        result,
+    );
+    if crate::templates::is_path_like(reference) {
+        check_manifest_consistency(&template, spans, source, result);
+    }
 }
 
 fn check_fonts(
@@ -253,11 +285,6 @@ fn is_well_formed_url(url: &str) -> bool {
     !url.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
-/// Design groups a template can declare support for (spec §6 manifest `supported`).
-/// Tool-level fields (`template`, `fit_one_page`, `fit_floor`, `font_paths`) are not
-/// groups: the tool consumes them, so a template never ignores them.
-const DESIGN_GROUPS: [&str; 6] = ["page", "margins", "fonts", "sizes", "spacing", "colors"];
-
 /// Warn when the YAML writes values under a design group the template does not declare
 /// supported (plan 3.5): the render will silently ignore them (spec §6).
 ///
@@ -281,6 +308,66 @@ fn check_manifest_support(
             "template '{template_name}' does not support the design field '{group}'; its values are ignored"
         );
         let diag = Diag::error(message, "ignored by this template", span, source.clone());
+        result.warnings.push(Diag {
+            severity: Severity::Warning,
+            ..diag
+        });
+    }
+}
+
+/// Warn when a custom template's manifest and its sources disagree (plan 5.4,
+/// ADR-0028): a declared group it never reads (so written values are silently
+/// ignored without the ADR-0023 warning firing), or a group it reads but does not
+/// declare (so the manifest under-promises and the ADR-0023 warning misfires).
+///
+/// The scan (`Template::references_group`) is a heuristic, and this is exactly why
+/// built-ins are exempt — their agreement is pinned by unit tests instead, so no
+/// shipped template can produce these warnings.
+fn check_manifest_consistency(
+    template: &crate::templates::Template,
+    spans: &spans::SpanMap,
+    source: &miette::NamedSource<String>,
+    result: &mut ValidationResult,
+) {
+    for group in DESIGN_GROUPS {
+        let declared = template
+            .supported_options
+            .iter()
+            .any(|declared| declared == group);
+        let read = template.references_group(group);
+        if declared == read {
+            continue;
+        }
+        let message = if declared {
+            format!(
+                "template '{}' declares support for '{group}' but its sources never read design.{group}; values written under it are ignored without warning",
+                template.name
+            )
+        } else {
+            format!(
+                "template '{}' reads design.{group} but its manifest.yaml does not declare '{group}' in supported",
+                template.name
+            )
+        };
+        let diag = labeled(
+            spans,
+            source,
+            "design.template",
+            message,
+            "template used here",
+        )
+        .unwrap_or_else(|| {
+            // Unreachable from a successful check: a path reference was written by
+            // the user, so `design.template` is in the span map (same invariant as
+            // `check_schema_version`).
+            Diag::plain(
+                format!(
+                    "template '{}' and its manifest.yaml disagree on '{group}'",
+                    template.name
+                ),
+                Severity::Warning,
+            )
+        });
         result.warnings.push(Diag {
             severity: Severity::Warning,
             ..diag
@@ -325,6 +412,65 @@ mod tests {
         let mut result = ValidationResult::default();
         check_manifest_support("plain", &supported, &spans, &source, &mut result);
         result.warnings
+    }
+
+    fn template_declaring(supported: &[&str], reads: &[&str]) -> crate::templates::Template {
+        let main_source = reads
+            .iter()
+            .map(|group| format!("design.{group}.x"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        crate::templates::Template {
+            name: "custom".into(),
+            description: "test".into(),
+            supported_options: supported.iter().map(|s| (*s).to_owned()).collect(),
+            main_source,
+            extra_sources: vec![],
+        }
+    }
+
+    fn consistency_warnings(template: &crate::templates::Template) -> Vec<Diag> {
+        let yaml = "design:\n  template: ./custom\n";
+        let spans = spans::scalar_spans(yaml);
+        let source = miette::NamedSource::new("cv.yaml", yaml.to_owned());
+        let mut result = ValidationResult::default();
+        check_manifest_consistency(template, &spans, &source, &mut result);
+        result.warnings
+    }
+
+    #[test]
+    fn consistency_warns_when_the_manifest_overpromises() {
+        let warnings =
+            consistency_warnings(&template_declaring(&["margins", "colors"], &["margins"]));
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "template 'custom' declares support for 'colors' but its sources never read design.colors; values written under it are ignored without warning"
+            ],
+            "only the declared-but-unread group warns"
+        );
+        assert_eq!(warnings[0].severity, Severity::Warning, "never an error");
+    }
+
+    #[test]
+    fn consistency_warns_when_the_manifest_underdeclares() {
+        let warnings = consistency_warnings(&template_declaring(&[], &["page"]));
+        assert_eq!(
+            warnings[0].message,
+            "template 'custom' reads design.page but its manifest.yaml does not declare 'page' in supported"
+        );
+    }
+
+    #[test]
+    fn consistency_is_quiet_when_manifest_and_sources_agree() {
+        assert!(
+            consistency_warnings(&template_declaring(
+                &["margins", "colors"],
+                &["margins", "colors"]
+            ))
+            .is_empty()
+        );
     }
 
     #[test]
@@ -372,16 +518,19 @@ mod tests {
     }
 
     #[test]
-    fn compact_template_ships_full_design_support() {
-        // The shipped built-in declares every group, so no built-in CV can warn (the
-        // warning itself is exercised against a declared-minimal template above).
-        let template = crate::templates::load_builtin("compact").expect("compact loads");
-        for group in DESIGN_GROUPS {
-            assert!(
-                template.supported_options.iter().any(|s| s == group),
-                "compact manifest must declare {group}: {:?}",
-                template.supported_options
-            );
+    fn builtins_ship_full_design_support() {
+        // Every built-in declares every group, so no built-in CV can ever trigger the
+        // ADR-0023 warning (the warning itself is exercised against a declared-minimal
+        // template above).
+        for name in crate::templates::builtin_names() {
+            let template = crate::templates::load_builtin(&name).expect("built-in loads");
+            for group in DESIGN_GROUPS {
+                assert!(
+                    template.supported_options.iter().any(|s| s == group),
+                    "'{name}' manifest must declare {group}: {:?}",
+                    template.supported_options
+                );
+            }
         }
     }
 }

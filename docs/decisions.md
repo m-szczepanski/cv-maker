@@ -135,6 +135,11 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   YAML comment points at the (future) JSON Schema for editor tooling.
 - **Consequences:** `cv.schema.json` referenced in the comment does not exist until M2
   (`cv schema`); the comment is aspirational until then — harmless for editors.
+- **Amendment (M5):** with a second built-in (`classic`) the `--template` flag must
+  actually select it or it lies: `cv init --template <name>` now writes the chosen
+  name into the starter's `design.template` (the rest of the content is unchanged).
+  It still accepts built-in names only — a custom folder is referenced by path in
+  the YAML afterwards, not through `init` (spec §3).
 
 ## ADR-0012 — `--quiet` suppresses the success line; warnings go to stderr
 
@@ -416,6 +421,102 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
 - **Consequences:** §14 exit-code question closed; the floor probe's PDF (the most
   aggressive compile) is always what gets written on overflow, so the user still
   gets the closest possible one-pager's content, over multiple pages.
+
+## ADR-0027 — Template reference grammar and custom-folder loading (plan 5.3)
+
+- **Context:** Spec §6: `design.template` accepts a built-in name or a relative folder
+  path (`./my-template`); custom templates use the same contract and must be pure (no
+  network, no reads outside their folder, "enforce in the World impl"). Open points: how
+  to tell a name from a path, what the folder must contain, and how purity is enforced.
+- **Decision:** A reference is a **path** when it contains `/` or `\` or starts with `.`;
+  anything else is a built-in name. Path references resolve against the CV file's
+  directory (same rule as `design.font_paths`). The loader reads `manifest.yaml`,
+  `template.typ`, and every nested `**/*.typ` from disk into the same in-memory
+  `Template` shape the built-ins use — `src/render/` did not change. Purity is
+  enforcement by construction: the Typst world only ever sees the virtual sources this
+  module loaded plus the tool's `data.yaml`; no filesystem resolver is configured and
+  the typst-as-lib package resolver (its network + cache path, verified absent in the
+  0.17.0 sources unless `with_package_file_resolver` is called) is never enabled, so a
+  `@preview` import fails as a template error. Load failures are typed
+  `Error::TemplateLoad` messages naming the user-written reference and the exact
+  problem (folder missing, no `template.typ`, no/invalid/unusable `manifest.yaml`,
+  non-UTF-8 source), surfaced as a span-labeled diagnostic at `design.template` by
+  `cv check`/`cv build`; each class has an e2e test.
+- **Rationale:** The bare-name-is-builtin rule keeps the snapshot-pinned
+  "unknown template 'compactt' / did you mean 'compact'?" UX exactly — a typo never
+  silently becomes a folder lookup. Reading from disk into the existing in-memory
+  contract beats teaching the World to resolve files: one loader, no Typst-side path
+  policy, and purity falls out of the file set instead of being policed.
+- **Consequences:** Binary non-`.typ` files (manifest `assets/` of spec §6) are not
+  served to the compiler — built-ins need none, and wiring binary virtual files would
+  touch the render layer for no current feature. `cv templates` lists built-ins only
+  (spec §3). Custom-template Typst warnings are now reachable and reported (the
+  reporting point reserved back in M2).
+
+## ADR-0028 — Manifest validation: required fields, version, declared-vs-reads (plan 5.4)
+
+- **Context:** Plan 5.4: custom-template manifests must have name/description/schema
+  version present, and "declared supported options consistent with what the template
+  reads". The "consistent" part is fuzzy: what a template reads is not statically
+  decidable without interpretation.
+- **Decision:** Three layers. (1) Presence and shape: serde — `name`, `description`,
+  `schema_version` are required, unknown keys rejected (`deny_unknown_fields`).
+  (2) Usability, checked on every load (built-in and custom): `name`/`description`
+  non-empty after trimming, and `schema_version == 1` (mirrors the CV-level schema
+  check; the manifest targets the same data contract). (3) Consistency: per design
+  group, compare the manifest's `supported` against whether the template sources
+  contain `design.<group>`; either-direction mismatch is a **warning** (ADR-0015
+  class) labeled at `design.template`, exit stays 0.
+- **Rationale:** The scan is a heuristic — aliasing (`let d = design`) defeats it —
+  so it must never fail a build, and it runs for **custom templates only**: shipped
+  templates' declared-vs-reads agreement is instead pinned by unit tests
+  (`every_builtin_reads_exactly_the_groups_its_manifest_declares`), so no built-in CV
+  can ever gain a new warning. A wrong `supported` name matters because the ADR-0023
+  warning (written-but-undeclared ⇒ ignored) misfires in both directions: a
+  declared-but-never-read group silently ignores user values *without* warning, an
+  undeclared-but-read group triggers false warnings.
+- **Consequences:** A copied built-in with an honest manifest stays warning-free; a
+  manifest that lies (either direction) gets explained in `cv check` output with a
+  span on the `design.template` line.
+
+## ADR-0029 — Watch rebuilds on content snapshots, not event paths (plan 5.6)
+
+- **Context:** Spec §3: `cv watch` rebuilds on change of the YAML *or its custom
+  template files*, printing each build's result; spec §2 wants `notify` debounced.
+  Ambiguities: which events count as a change (backends differ: FSEvents coalesces
+  bursts and reports folder-level paths, inotify is per-file; atomic PDF writes land
+  in the same directory as the YAML and would echo back), how to debounce without a
+  second crate (`.AGENTS.md` 22), and what ends the loop.
+- **Decision:** Events are only a *wake* signal. After the queue goes quiet for
+  100 ms (drain-until-quiet, implemented directly over `notify`'s channel — no
+  debouncer crate), the loop hashes the watched inputs — the YAML and, when
+  `design.template` is a path reference, every file under that folder (a
+  missing folder is itself one tracked state) — and rebuilds only when the
+  snapshot differs from the one recorded before the last build, re-checking after
+  each build (a save landing mid-build is caught up, so the PDF always converges
+  to the newest content). Because our own PDF/temp writes are not in the snapshot,
+  they can never cause a rebuild loop. Watch registration: the YAML's directory
+  (non-recursive; missing YAML files still watch) plus the custom template folder
+  recursively, re-synced whenever a rebuild was triggered by a YAML change (the
+  reference may move). Each rebuild is a verbatim `cv build` run: same result line,
+  same warnings, same exit-code-neutral overflow report. Build errors print and
+  the loop continues — the watched file is the one being edited. Startup: build
+  once, then watch; `--quiet` drops the progress banner and the result lines
+  (ADR-0012) but not errors/warnings. Ctrl-C (default signal handling) ends the
+  session; v1 ships no graceful-shutdown plumbing. A missing input *directory*
+  fails at startup naming it.
+- **Rationale:** Trusting event paths for the *decision* would couple correctness
+  to backend quirks; content snapshots are backend-independent, dedupe editor
+  bursts without timers, make missed events self-healing (the next wake rebuilds
+  whatever is actually on disk), and make the rebuild-equality logic unit-testable
+  without sleeping (rule 18). The catch-up loop guarantees convergence rather than
+  "exactly one build per event", which is strictly better to watch.
+- **Consequences:** A rebuild costs one content hash pass over a handful of small
+  files (~µs). Creating a missing template folder inside the YAML directory wakes
+  the watched dir itself, so the catch-up loop rebuilds and the sync registers the
+  new folder in the same pass. The `Burst::Disconnected` arm (channel died while
+  the watcher is alive) is unreachable from user input — it reports an internal
+  error rather than silently exiting.
 
 ## Open questions (spec §14) — status
 
