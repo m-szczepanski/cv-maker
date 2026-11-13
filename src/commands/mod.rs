@@ -1,10 +1,12 @@
-//! Command handlers: `init`, `build` (M1); `check`, `schema` (M2); `fonts` (M3).
+//! Command handlers: `init`, `build` (M1); `check`, `schema` (M2); `fonts` (M3);
+//! `templates`, `watch` (M5).
 
 pub mod build;
 pub mod check;
 pub mod fonts;
 pub mod init;
 pub mod schema;
+pub mod templates;
 
 use std::path::{Path, PathBuf};
 

@@ -141,6 +141,25 @@ fn init_unknown_template_lists_available() {
     );
 }
 
+/// ADR-0011 amendment (plan 5.5): `--template classic` writes a classic starter
+/// that parses with that template and builds out of the box.
+#[test]
+fn init_template_flag_writes_a_starter_for_the_chosen_builtin() {
+    let dir = unique_dir("init-classic");
+    let (ok, out) = run_cv(&dir, &["init", "--template", "classic"]);
+    assert!(ok, "cv init --template classic failed: {out}");
+
+    let yaml = fs::read_to_string(dir.join("cv.yaml")).expect("starter written");
+    let doc = cv::model::Document::from_yaml_str(&yaml).expect("classic starter parses");
+    assert_eq!(doc.design.template, "classic");
+
+    let (ok, out) = run_cv(&dir, &["build"]);
+    assert!(ok, "classic starter must build: {out}");
+    let pages = pdf_extract::extract_text_by_pages(dir.join("cv.pdf")).expect("extract");
+    assert_eq!(pages.len(), 1, "classic starter fits one page");
+    assert!(pages.concat().contains("Jane Doe"));
+}
+
 /// A missing `--font-path` directory is an error, never silent fallback (spec §8).
 #[test]
 fn missing_font_path_dir_fails_the_build() {

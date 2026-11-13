@@ -89,20 +89,54 @@ fn init_exposes_its_flags() {
 
 #[test]
 fn unimplemented_commands_exit_non_zero_and_say_so() {
-    for args in [["templates"], ["watch"]] {
-        let output = cv().args(args).output().expect("binary runs");
+    // Only `watch` remains stubbed while `cv watch` lands (plan 5.6).
+    let output = cv().args(["watch"]).output().expect("binary runs");
+    assert!(
+        !output.status.success(),
+        "`cv watch` must not pretend to succeed"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not implemented yet"),
+        "`cv watch` must state it is unimplemented; stderr:\n{stderr}"
+    );
+}
+
+/// Plan 5.5 (spec §3): `cv templates` lists the built-ins with one-line descriptions.
+#[test]
+fn templates_lists_builtins_with_descriptions() {
+    let output = cv().args(["templates"]).output().expect("binary runs");
+    assert!(output.status.success(), "cv templates must succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for name in ["compact", "classic"] {
         assert!(
-            !output.status.success(),
-            "`cv {}` must not pretend to succeed",
-            args[0]
-        );
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("not implemented yet"),
-            "`cv {}` must state it is unimplemented; stderr:\n{stderr}",
-            args[0]
+            stdout.lines().any(|line| line.starts_with(name)),
+            "listing must have a line starting with '{name}', got:\n{stdout}"
         );
     }
+    assert!(
+        stdout.contains("Dense single-column"),
+        "compact's manifest description must show, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Conventional layout"),
+        "classic's manifest description must show, got:\n{stdout}"
+    );
+}
+
+/// The listing is essential output (ADR-0012): `--quiet` keeps it.
+#[test]
+fn templates_listing_survives_quiet() {
+    let output = cv()
+        .args(["--quiet", "templates"])
+        .output()
+        .expect("binary runs");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("compact") && stdout.contains("classic"),
+        "quiet must not hide the listing, got:\n{stdout}"
+    );
 }
 
 /// Plan 2.3: `cv schema` prints the derived JSON Schema and succeeds.

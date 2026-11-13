@@ -6,9 +6,15 @@ use crate::cli::InitArgs;
 use crate::error::{Error, Result};
 use crate::templates;
 
-/// The starter file `cv init` writes (plan 1.3.1). Generated content, not user data, so a
-/// plain `const &str` is fine. Based on the spec §4 example so the starter demonstrates
-/// every section type and design knob.
+/// The starter file `cv init` writes for the chosen built-in (plan 1.3.1, ADR-0011
+/// amended in M5): the fixed content with its one `template:` line set to the
+/// selection. Generated content, not user data, so a plain `const &str` is fine;
+/// based on the spec §4 example so it demonstrates every section type and design knob.
+pub fn starter_for(template: &str) -> String {
+    STARTER_YAML.replace("template: compact", &format!("template: {template}"))
+}
+
+/// The starter file text `cv init` writes (plan 1.3.1). Based on the spec §4 example.
 pub const STARTER_YAML: &str = r##"# yaml-language-server: $schema=./cv.schema.json
 schema: 1
 
@@ -91,7 +97,7 @@ pub fn run(args: &InitArgs) -> Result<()> {
         )));
     }
 
-    std::fs::write(&args.out, STARTER_YAML).map_err(|source| Error::Write {
+    std::fs::write(&args.out, starter_for(&args.template)).map_err(|source| Error::Write {
         path: args.out.display().to_string(),
         message: source.to_string(),
     })?;
@@ -115,4 +121,23 @@ fn schema_path_for(out: &Path) -> std::path::PathBuf {
     out.parent()
         .unwrap_or(Path::new("."))
         .join("cv.schema.json")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn starter_for_default_keeps_the_text_verbatim() {
+        assert_eq!(starter_for("compact"), STARTER_YAML);
+    }
+
+    #[test]
+    fn starter_for_selects_the_requested_builtin() {
+        let yaml = starter_for("classic");
+        assert!(yaml.contains("template: classic"), "{yaml}");
+        assert!(!yaml.contains("template: compact"), "{yaml}");
+        let doc = crate::model::Document::from_yaml_str(&yaml).expect("classic starter parses");
+        assert_eq!(doc.design.template, "classic");
+    }
 }

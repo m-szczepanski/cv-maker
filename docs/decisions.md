@@ -135,6 +135,11 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   YAML comment points at the (future) JSON Schema for editor tooling.
 - **Consequences:** `cv.schema.json` referenced in the comment does not exist until M2
   (`cv schema`); the comment is aspirational until then — harmless for editors.
+- **Amendment (M5):** with a second built-in (`classic`) the `--template` flag must
+  actually select it or it lies: `cv init --template <name>` now writes the chosen
+  name into the starter's `design.template` (the rest of the content is unchanged).
+  It still accepts built-in names only — a custom folder is referenced by path in
+  the YAML afterwards, not through `init` (spec §3).
 
 ## ADR-0012 — `--quiet` suppresses the success line; warnings go to stderr
 

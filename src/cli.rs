@@ -109,7 +109,7 @@ pub fn run(cli: Cli) -> crate::error::Result<()> {
         Command::Build(args) => commands::build::run(args, &cli),
         Command::Watch(_) => Err(unsupported(not_yet("watch"))),
         Command::Check(args) => commands::check::run(args, &cli.font_path),
-        Command::Templates => Err(unsupported(not_yet("templates"))),
+        Command::Templates => commands::templates::run(),
         Command::Schema => commands::schema::run(),
         Command::Fonts => commands::fonts::run(&cli.font_path),
     }
