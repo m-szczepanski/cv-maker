@@ -72,6 +72,11 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   keeps fit iterations cheap (input change only).
 - **Consequences:** `src/render/data.rs` defines the exact template-facing schema. Template
   authors see only resolved values (no defaults logic, no user-facing string forms).
+- **Amendment (M4 review):** the decision text says `data.yaml` carries `cv` + `design` +
+  `fit` scales, but the fit scales were *only ever* delivered through `sys.inputs.fit`; the
+  serialized `fit:` block was a permanently-identity duplicate that became actively
+  misleading once the loop produced non-1.0 scales. `data.yaml` now carries `cv` + `design`
+  only; `sys.inputs.fit` is the single fit channel.
 
 ## ADR-0007 — Font priority: bundled → user dirs → system (plan 1.4.3, spec §2 vs §8)
 
@@ -332,6 +337,86 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   tests against a declared-minimal template and becomes CLI-visible from M5 with custom
   templates.
 
+## ADR-0024 — Fit search shape: coupled tightness, bounded bisection, fixed grid (plan 4.1/4.2)
+
+- **Context:** Spec §7 demands: Phase A (spacing.* and margins, floors 0.6 / 1.0 cm),
+  then Phase B (font sizes, floor = the stricter of `fit_floor.min_scale` and
+  `min_body_size`), least-aggressive-first, binary search preferred, hard
+  iteration/floor/determinism guarantees, scale factors via the `fit` object.
+  Ambiguities: how Phase A's two levers (spacing, margins) combine; how "line_height"
+  (a dimensionless ratio) participates in a scale floor of 0.6; where the font floor
+  is enforced; how many probes.
+- **Decision:**
+  - Phase A couples both levers into one linear *tightness* `t ∈ [0,1]`:
+    `spacing_scale = 1 − t·(1−0.6)` and `margin_scale = 1 − t·(1−margin_min)`, where
+    `margin_min = max(1 cm/x, 1 cm/y)` capped at 1.0 — so margins approach but never
+    cross 1.0 cm, and a margin already below 1.0 cm is never shrunk further. The
+    identity compile doubles as the "t = 0 does not fit" knowledge point (never
+    recompiled).
+  - `line_height` tightens as `1 + (lh − 1)·spacing_scale`: only the leading *above*
+    1.0 scales, so tightening can never overlap lines. Multiplying the ratio by 0.6
+    (literal "spacing scale 0.6") would set line height to 0.75 — unreadable; the
+    spec's floor is taken to apply to the leading, not to a ratio whose product may
+    not fall below 1.0.
+  - Phase B (only when A's floors still overflow) bisects `font_scale ∈ [floor, 1)`
+    at `t = 1`, `floor = max(min_scale, min_body_size / sizes.body)` clamped to
+    `≤ 1.0` (never shrink); nonsensical floor inputs (≥ 1, NaN, body 0) degrade to
+    1.0 = font phase disabled. The template multiplies every size by `font_scale`,
+    so `min_body_size` bounds exactly the body text (other roles may dip below it —
+    they are relative to body by default).
+  - Both searches are bisections with a **fixed probe count** (`MAX_PHASE_PROBES = 5`,
+    resolution 1/32 ≈ 3.1 % of each phase; for the font phase that means ≈ 0.5 %
+    steps, finer than the spec's 0.02 example). Probes are the exact midpoints, so
+    the search is a pure function: deterministic and terminating by construction;
+    worst case 13 compiles.
+  - Least-aggressive reading: minimal `t` found (Phase A), then maximal `f` found
+    (Phase B), no re-exploration of Phase A after Phase B succeeds (spec's ordering:
+    spacing before fonts). If rounding makes the "fits" predicate non-monotonic
+    (possible for layout), bisection may settle on a fitting-but-not-optimal grid
+    point — the result still fits, never crosses a floor, and repeats identically.
+  - After the searches find nothing, the floor settings are probed explicitly once,
+    so `t = 1` / `f = floor` are exact results, not grid approximations.
+- **Consequences:** `src/fit.rs` needs no Typst types (it only inspects
+  `RenderOutput::page_count`); the engine compiles repeatedly with different
+  `sys.inputs.fit`, fonts loaded once (plan 1.4.4). A finer search is a constant
+  change, each probe ≈ one compile of cost.
+
+## ADR-0025 — Success line reports the full applied scale triple when tightened (plan 4.1)
+
+- **Context:** Spec §7: "The final output line reports the applied scale." M1/ADR-0012
+  fixed the line to `fit: scale 1.00 (…ms)`; with three independent scales that single
+  number is ambiguous.
+- **Decision:** when Phase A tightened anything, the line lists the triple:
+  `fit: scale 0.89 spacing 0.60 margins 0.85`; otherwise it stays the single
+  `fit: scale X` — byte-identical to the M2 line (`fit: scale 1.00`) for first-fit
+  CVs, so existing snapshots/tests keep their meaning. `--no-fit`/`fit_one_page:
+  false` report the applied scales (all 1.00 — nothing was applied).
+- **Rationale:** one stable prefix for scripts (`fit: scale `), full observability of
+  what the loop did, no behavior change for the common case.
+
+## ADR-0026 — Overflow at the floor: PDF written, exit 0, loud warning (plan 4.3)
+
+- **Context:** Spec §7 step 4 and §14: when content still overflows at the floors,
+  the PDF is written and a clear warning printed; the exit code was the open
+  question ("0-with-warning vs. a dedicated non-zero code").
+- **Decision:** **exit 0 with a warning**. Message (stderr, miette warning handler,
+  also under `--quiet` per ADR-0012): `content still overflows at the fit floor:
+  about N lines spill onto P extra page(s); cut content (e.g. bullets or paragraphs)
+  or relax design.fit_floor / margins`. `N` counts shaped text runs on the overflow
+  pages (computed in `src/render/` as `RenderOutput::overflow_lines`; a slight
+  over-estimate for style-mixed lines, explicitly worded as "about"). The success
+  line still reports the pages and the exact floor scales.
+- **Rationale:** spec §3 ties non-zero exit to "any *error*", and an overflowed
+  build produces the requested PDF — it is a result, not a failure. ADR-0015
+  already fixed warnings as exit-code-neutral; a special code would be a second,
+  contradicting rule ("warnings never affect the exit code" vs. "this warning
+  does"). CI that must fail on overflow can grep the line or assert the page count
+  from the success line; if that turns out to matter in practice, adding a code 2
+  later is one line in `main` and does not change this contract's shape.
+- **Consequences:** §14 exit-code question closed; the floor probe's PDF (the most
+  aggressive compile) is always what gets written on overflow, so the user still
+  gets the closest possible one-pager's content, over multiple pages.
+
 ## Open questions (spec §14) — status
 
 Assigned to milestones per the implementation plan; each gets an ADR when resolved.
@@ -339,7 +424,7 @@ Assigned to milestones per the implementation plan; each gets an ADR when resolv
 | Question | Status |
 |---|---|
 | Inline Markdown: tool-structured vs. Typst helper | **decided in M1 (ADR-0008): tool-structured; M1 ships plain text** |
-| Exit code when content can't fit at the floor | open — decide in M4 (step 4.3) |
+| Exit code when content can't fit at the floor | **decided in M4 (ADR-0026): 0 with a loud warning** |
 | Tagged PDF / accessibility support in pinned `typst-pdf` | **checked in M1 (ADR-0009): tagged PDFs on; standards finalized M6** |
 | `cv init` role-tuned examples vs. one neutral example | open — decide in M6 (step 6.2) |
 | Per-job variants (`--variant`) | out of scope for v1; keep model extensible |

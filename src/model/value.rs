@@ -45,6 +45,18 @@ impl Length {
             unit: self.unit.suffix().to_owned(),
         }
     }
+
+    /// The length in PostScript points (1 pt = 1/72 in, 1 in = 2.54 cm exactly).
+    /// Used by the fit loop to compare floors across units (spec §7).
+    pub fn to_pt(&self) -> f64 {
+        let pt_per_unit = match self.unit {
+            LengthUnit::Pt => 1.0,
+            LengthUnit::Mm => 72.0 / 25.4,
+            LengthUnit::Cm => 720.0 / 25.4,
+            LengthUnit::In => 72.0,
+        };
+        self.value * pt_per_unit
+    }
 }
 
 /// Structured length as seen by templates in `data.yaml`.

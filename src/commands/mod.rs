@@ -8,6 +8,8 @@ pub mod schema;
 
 use std::path::{Path, PathBuf};
 
+use miette::Severity;
+
 use crate::error::{Diag, Error, Result};
 use crate::model::Document;
 use crate::validate::ValidationResult;
@@ -72,6 +74,20 @@ pub fn report_warnings(warnings: &[Diag]) {
     for warning in warnings {
         eprint!("{}", crate::error::render_diag(warning, false));
     }
+}
+
+/// The fit-overflow warning at the floor (spec §7 step 4, ADR-0026): plain text —
+/// the cause is content volume, not one YAML value, so there is no span to label.
+pub fn report_overflow(output: &crate::render::RenderOutput) {
+    let message = format!(
+        "content still overflows at the fit floor: about {} lines spill onto {} extra page(s); cut content (e.g. bullets or paragraphs) or relax design.fit_floor / margins",
+        output.overflow_lines,
+        output.page_count.saturating_sub(1),
+    );
+    eprint!(
+        "{}",
+        crate::error::render_diag(&Diag::plain(message, Severity::Warning), false)
+    );
 }
 
 /// `design.font_paths` entries are relative to the YAML file's directory (spec §4 example).

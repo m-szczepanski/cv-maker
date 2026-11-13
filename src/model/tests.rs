@@ -146,6 +146,15 @@ fn length_parsing_covers_units_and_rejects_bad_input() {
 }
 
 #[test]
+fn length_to_pt_covers_every_unit() {
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    assert!(near(Length::new(10.0, LengthUnit::Pt).to_pt(), 10.0));
+    assert!(near(Length::new(1.0, LengthUnit::In).to_pt(), 72.0));
+    assert!(near(Length::new(2.54, LengthUnit::Cm).to_pt(), 72.0));
+    assert!(near(Length::new(25.4, LengthUnit::Mm).to_pt(), 72.0));
+}
+
+#[test]
 fn color_parsing_accepts_3_and_6_digit_hex() {
     assert_eq!(
         serde_yaml_ng::from_str::<Color>("\"#2563eb\"").unwrap(),

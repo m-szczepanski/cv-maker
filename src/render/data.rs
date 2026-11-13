@@ -13,7 +13,9 @@ use serde::Serialize;
 use crate::markdown::MdString;
 use crate::model::{Contact, Cv, Design, Page};
 
-/// The document handed to templates: `cv`, resolved `design`, and the `fit` scales.
+/// The document handed to templates: `cv` and the fully resolved `design`.
+/// The fit-loop scales are **not** in this file — they arrive through
+/// `sys.inputs.fit`, so refits never invalidate the data contract (ADR-0006).
 ///
 /// The `cv` block is mirrored into template-facing structs: the Markdown-enabled fields
 /// (summary, bullets, text items — ADR-0016) serialize as token lists, everything else
@@ -22,7 +24,6 @@ use crate::model::{Contact, Cv, Design, Page};
 pub struct DataFile<'a> {
     pub cv: CvData<'a>,
     pub design: DesignData<'a>,
-    pub fit: FitData,
 }
 
 impl<'a> DataFile<'a> {
@@ -30,7 +31,6 @@ impl<'a> DataFile<'a> {
         Self {
             cv: CvData::from(cv),
             design: DesignData::from(design),
-            fit: FitData::default(),
         }
     }
 }
@@ -233,25 +233,6 @@ pub struct ColorsData {
 pub struct FitFloorData {
     pub min_body_size: crate::model::value::LengthData,
     pub min_scale: f64,
-}
-
-/// Current fit-loop scale factors (spec §7). Templates multiply their own sizes/spacings
-/// by these; all 1.0 until the fit loop (M4) changes them.
-#[derive(Debug, Serialize)]
-pub struct FitData {
-    pub font_scale: f64,
-    pub spacing_scale: f64,
-    pub margin_scale: f64,
-}
-
-impl Default for FitData {
-    fn default() -> Self {
-        Self {
-            font_scale: 1.0,
-            spacing_scale: 1.0,
-            margin_scale: 1.0,
-        }
-    }
 }
 
 /// Lowercase page name used in `data.yaml` and in error messages.

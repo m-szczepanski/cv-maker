@@ -7,6 +7,7 @@
 pub mod cli;
 pub mod commands;
 pub mod error;
+pub mod fit;
 pub mod markdown;
 pub mod model;
 pub mod render;
