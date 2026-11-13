@@ -25,11 +25,14 @@ Coding rules (how to write the code) live in [`.AGENTS.md`](.AGENTS.md).
 5. No `unwrap()` / `expect()` outside tests and `main` startup, unless commented with the
    invariant (spec §13.8).
 6. Every user-facing error must have a test (spec §13.9).
-7. When the spec is ambiguous, pick the simplest option that fits the goals, record it in
+7. The code must be tested, aiming for 100% line coverage (`.AGENTS.md`, rule 21). Measure
+   with `cargo llvm-cov` before declaring work done; unreached code needs a documented
+   invariant comment.
+8. When the spec is ambiguous, pick the simplest option that fits the goals, record it in
    `docs/decisions.md`, and flag it for review. Do not silently expand scope.
-8. Do not add features outside the spec; propose them in the PR description instead (spec §13.5).
-9. Every new crate dependency needs a one-sentence justification in the PR (spec §2).
-10. Report at the end of each task: what changed, what was tested, what is uncertain (spec §13.10).
+9. Do not add features outside the spec; propose them in the PR description instead (spec §13.5).
+10. Every new crate dependency needs a one-sentence justification in the PR (spec §2).
+11. Report at the end of each task: what changed, what was tested, what is uncertain (spec §13.10).
 
 ## Review-sensitive areas
 
