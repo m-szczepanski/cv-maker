@@ -1,0 +1,12 @@
+name: classic
+description: Conventional layout with a header rule and section dividers.
+schema_version: 1
+# Design fields this template honors (spec §6). Tool-level fields (template, fit_one_page,
+# fit_floor, font_paths) are not listed: the tool, not the template, consumes them.
+supported:
+  - page
+  - margins
+  - fonts
+  - sizes
+  - spacing
+  - colors
