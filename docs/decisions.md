@@ -417,6 +417,63 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   aggressive compile) is always what gets written on overflow, so the user still
   gets the closest possible one-pager's content, over multiple pages.
 
+## ADR-0027 — Template reference grammar and custom-folder loading (plan 5.3)
+
+- **Context:** Spec §6: `design.template` accepts a built-in name or a relative folder
+  path (`./my-template`); custom templates use the same contract and must be pure (no
+  network, no reads outside their folder, "enforce in the World impl"). Open points: how
+  to tell a name from a path, what the folder must contain, and how purity is enforced.
+- **Decision:** A reference is a **path** when it contains `/` or `\` or starts with `.`;
+  anything else is a built-in name. Path references resolve against the CV file's
+  directory (same rule as `design.font_paths`). The loader reads `manifest.yaml`,
+  `template.typ`, and every nested `**/*.typ` from disk into the same in-memory
+  `Template` shape the built-ins use — `src/render/` did not change. Purity is
+  enforcement by construction: the Typst world only ever sees the virtual sources this
+  module loaded plus the tool's `data.yaml`; no filesystem resolver is configured and
+  the typst-as-lib package resolver (its network + cache path, verified absent in the
+  0.17.0 sources unless `with_package_file_resolver` is called) is never enabled, so a
+  `@preview` import fails as a template error. Load failures are typed
+  `Error::TemplateLoad` messages naming the user-written reference and the exact
+  problem (folder missing, no `template.typ`, no/invalid/unusable `manifest.yaml`,
+  non-UTF-8 source), surfaced as a span-labeled diagnostic at `design.template` by
+  `cv check`/`cv build`; each class has an e2e test.
+- **Rationale:** The bare-name-is-builtin rule keeps the snapshot-pinned
+  "unknown template 'compactt' / did you mean 'compact'?" UX exactly — a typo never
+  silently becomes a folder lookup. Reading from disk into the existing in-memory
+  contract beats teaching the World to resolve files: one loader, no Typst-side path
+  policy, and purity falls out of the file set instead of being policed.
+- **Consequences:** Binary non-`.typ` files (manifest `assets/` of spec §6) are not
+  served to the compiler — built-ins need none, and wiring binary virtual files would
+  touch the render layer for no current feature. `cv templates` lists built-ins only
+  (spec §3). Custom-template Typst warnings are now reachable and reported (the
+  reporting point reserved back in M2).
+
+## ADR-0028 — Manifest validation: required fields, version, declared-vs-reads (plan 5.4)
+
+- **Context:** Plan 5.4: custom-template manifests must have name/description/schema
+  version present, and "declared supported options consistent with what the template
+  reads". The "consistent" part is fuzzy: what a template reads is not statically
+  decidable without interpretation.
+- **Decision:** Three layers. (1) Presence and shape: serde — `name`, `description`,
+  `schema_version` are required, unknown keys rejected (`deny_unknown_fields`).
+  (2) Usability, checked on every load (built-in and custom): `name`/`description`
+  non-empty after trimming, and `schema_version == 1` (mirrors the CV-level schema
+  check; the manifest targets the same data contract). (3) Consistency: per design
+  group, compare the manifest's `supported` against whether the template sources
+  contain `design.<group>`; either-direction mismatch is a **warning** (ADR-0015
+  class) labeled at `design.template`, exit stays 0.
+- **Rationale:** The scan is a heuristic — aliasing (`let d = design`) defeats it —
+  so it must never fail a build, and it runs for **custom templates only**: shipped
+  templates' declared-vs-reads agreement is instead pinned by unit tests
+  (`every_builtin_reads_exactly_the_groups_its_manifest_declares`), so no built-in CV
+  can ever gain a new warning. A wrong `supported` name matters because the ADR-0023
+  warning (written-but-undeclared ⇒ ignored) misfires in both directions: a
+  declared-but-never-read group silently ignores user values *without* warning, an
+  undeclared-but-read group triggers false warnings.
+- **Consequences:** A copied built-in with an honest manifest stays warning-free; a
+  manifest that lies (either direction) gets explained in `cv check` output with a
+  span on the `design.template` line.
+
 ## Open questions (spec §14) — status
 
 Assigned to milestones per the implementation plan; each gets an ADR when resolved.

@@ -4,6 +4,16 @@ use serde::Deserialize;
 
 use crate::error::{Error, Result};
 
+/// Design groups a template can declare support for (spec §6 manifest `supported`).
+/// Tool-level fields (`template`, `fit_one_page`, `fit_floor`, `font_paths`) are not
+/// groups: the tool consumes them, so a template never ignores them.
+pub const DESIGN_GROUPS: [&str; 6] = ["page", "margins", "fonts", "sizes", "spacing", "colors"];
+
+/// Template manifest schema versions this tool understands. Kept in step with the
+/// CV-level schema version check in `src/validate/` (both are the data contract of
+/// spec §4, and it is version 1 until spec changes it).
+pub const SUPPORTED_SCHEMA_VERSION: u32 = 1;
+
 /// A template's `manifest.yaml`.
 ///
 /// `supported` lists the `design.*` fields the template honors. In M3, `cv check` warns when
@@ -25,5 +35,24 @@ pub struct Manifest {
 impl Manifest {
     pub fn from_yaml_str(yaml: &str) -> Result<Self> {
         serde_yaml_ng::from_str(yaml).map_err(Error::from)
+    }
+
+    /// Reject manifests that cannot describe a loadable template (plan 5.4): empty
+    /// identity fields or a schema version this tool does not understand. The message
+    /// is a fragment; loaders prefix it with the template folder context.
+    pub fn check_usable(&self) -> std::result::Result<(), String> {
+        if self.name.trim().is_empty() {
+            return Err("must declare a non-empty `name`".to_owned());
+        }
+        if self.description.trim().is_empty() {
+            return Err("must declare a non-empty `description`".to_owned());
+        }
+        if self.schema_version != SUPPORTED_SCHEMA_VERSION {
+            return Err(format!(
+                "targets schema version {}, but this tool uses version {SUPPORTED_SCHEMA_VERSION}",
+                self.schema_version
+            ));
+        }
+        Ok(())
     }
 }

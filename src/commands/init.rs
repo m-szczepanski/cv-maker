@@ -73,11 +73,12 @@ design:
 "##;
 
 pub fn run(args: &InitArgs) -> Result<()> {
-    // Only built-in templates can be referenced in M1; custom paths arrive in M5.
+    // `--template` selects a built-in by name (spec §3); custom folders are written
+    // into the YAML by the user after init (plan 5.3).
     let known = templates::builtin_names();
     if !known.iter().any(|n| n == &args.template) {
         return Err(Error::Unsupported(format!(
-            "unknown --template '{}'. Available templates: {}. Custom template folders arrive in M5.",
+            "unknown --template '{}'. Available templates: {}.",
             args.template,
             known.join(", ")
         )));
