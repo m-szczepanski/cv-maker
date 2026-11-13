@@ -24,6 +24,6 @@ pub struct Manifest {
 
 impl Manifest {
     pub fn from_yaml_str(yaml: &str) -> Result<Self> {
-        serde_yaml_ng::from_str(yaml).map_err(|e| Error::yaml(e, yaml))
+        serde_yaml_ng::from_str(yaml).map_err(Error::from)
     }
 }

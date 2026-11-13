@@ -89,11 +89,12 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         source,
     })?;
     temp.persist(path).map_err(|e| {
-        // persist errors carry the original error and the destination
-        Error::Unsupported(format!(
-            "could not move PDF into place at {}: {e}",
-            path.display()
-        ))
+        // persist errors carry the original error and the destination; the path is
+        // included in the Write variant's message
+        Error::Write {
+            path: path.display().to_string(),
+            message: e.to_string(),
+        }
     })?;
     Ok(())
 }

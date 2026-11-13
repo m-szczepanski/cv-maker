@@ -1,76 +1,16 @@
 //! Unit tests for the data model and strict value parsing (plan 1.1.5).
 
+use crate::commands::init::STARTER_YAML;
 use crate::error::Result;
-use crate::model::value::{Color, Length, LengthUnit};
+use crate::model::value::{Color, Length, LengthUnit, LineHeight};
 use crate::model::{Design, Document};
 
-/// The spec §4 example, which the model must parse end-to-end.
-const SPEC_EXAMPLE: &str = r##"# yaml-language-server: $schema=./cv.schema.json
-schema: 1
-
-cv:
-  name: Jane Doe
-  headline: Staff Software Engineer
-  location: Berlin, Germany
-  contact:
-    email: jane@example.dev
-    phone: "+49 000 000000"
-    links:
-      - { label: GitHub, url: "https://github.com/janedoe" }
-      - { label: Website, url: "https://janedoe.dev" }
-
-  summary: >
-    Backend engineer focused on high-throughput systems and developer tooling.
-
-  sections:
-    - title: Experience
-      type: entries
-      items:
-        - heading: Staff Engineer
-          org: Acme Corp
-          location: Remote
-          dates: 2021 – present
-          bullets:
-            - Cut p99 latency by 40% by moving the hot path to Rust
-            - Led a 6-person team through a zero-downtime migration
-    - title: Skills
-      type: key_values
-      items:
-        - { key: Languages, value: "Rust, Go, Python, TypeScript" }
-        - { key: Infrastructure, value: "Kubernetes, Postgres, Kafka" }
-    - title: Education
-      type: entries
-      items:
-        - heading: BSc Computer Science
-          org: University of Example
-          dates: 2012 – 2016
-
-design:
-  template: compact
-  page: a4
-  margins: { x: 1.5cm, y: 1.2cm }
-  fonts:
-    body: Inter
-    heading: Inter
-    mono: JetBrains Mono
-  sizes:
-    name: 20pt
-    heading: 11pt
-    body: 9.5pt
-    small: 8.5pt
-  spacing:
-    section_gap: 8pt
-    entry_gap: 4pt
-    line_height: 1.25
-  colors:
-    accent: "#2563eb"
-    text: "#111111"
-    muted: "#555555"
-"##;
-
+/// The `cv init` starter, derived from the spec §4 example. It demonstrates every section
+/// type and every design knob, so it doubles as the model's end-to-end parse fixture and
+/// cannot drift from what users actually get.
 #[test]
-fn parses_spec_example_end_to_end() -> Result<()> {
-    let doc = Document::from_yaml_str(SPEC_EXAMPLE)?;
+fn starter_yaml_parses_end_to_end() -> Result<()> {
+    let doc = Document::from_yaml_str(STARTER_YAML)?;
 
     assert_eq!(doc.schema, 1);
     assert_eq!(doc.cv.name, "Jane Doe");
@@ -218,6 +158,23 @@ fn color_parsing_accepts_3_and_6_digit_hex() {
     assert!(serde_yaml_ng::from_str::<Color>("\"2563eb\"").is_err());
     assert!(serde_yaml_ng::from_str::<Color>("\"#2563\"").is_err());
     assert!(serde_yaml_ng::from_str::<Color>("\"#zzzzzz\"").is_err());
+
+    // Multi-byte characters must be a clean error, not a panic (byte length differs from
+    // character count; regression test for a mid-character byte-slice panic).
+    assert!(serde_yaml_ng::from_str::<Color>("\"#€abc\"").is_err());
+    assert!(serde_yaml_ng::from_str::<Color>("\"#ab€c\"").is_err());
+}
+
+#[test]
+fn line_height_must_be_a_positive_number() {
+    assert_eq!(
+        serde_yaml_ng::from_str::<LineHeight>("1.25").unwrap(),
+        LineHeight(1.25)
+    );
+    // Matches the schema's exclusiveMinimum: 0.
+    assert!(serde_yaml_ng::from_str::<LineHeight>("0").is_err());
+    assert!(serde_yaml_ng::from_str::<LineHeight>("-1.25").is_err());
+    assert!(serde_yaml_ng::from_str::<LineHeight>("\"abc\"").is_err());
 }
 
 #[test]

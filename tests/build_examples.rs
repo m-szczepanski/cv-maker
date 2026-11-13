@@ -131,3 +131,30 @@ fn build_reports_template_errors_distinctly() {
         "error should say unknown template, got: {out}"
     );
 }
+
+/// Writing the PDF fails cleanly when the destination is unusable (e.g. `--output`
+/// pointing at a directory): typed error, no panic, and no temp files left behind.
+#[test]
+fn build_fails_cleanly_when_output_is_a_directory() {
+    let dir = unique_dir("output-is-dir");
+    run_cv(&dir, &["init"]);
+    fs::create_dir(dir.join("out-dir")).expect("create dir");
+
+    let (ok, out) = run_cv(&dir, &["build", "--output", "out-dir"]);
+    assert!(!ok, "output must not be a directory, got: {out}");
+    assert!(
+        out.contains("could not write"),
+        "error should be a write error, got: {out}"
+    );
+
+    let leftovers: Vec<_> = fs::read_dir(&dir)
+        .expect("read dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with(".cv-") || n.ends_with(".tmp"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "failed persist must clean up its temp file: {leftovers:?}"
+    );
+}

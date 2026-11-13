@@ -158,7 +158,8 @@ pub fn page_name(page: Page) -> String {
 
 /// Serialize the data file to a YAML string (deterministic: struct field order).
 pub fn to_yaml(cv: &Cv, design: &Design) -> crate::error::Result<String> {
-    serde_yaml_ng::to_string(&DataFile::new(cv, design)).map_err(|e| {
-        crate::error::Error::Unsupported(format!("could not serialize data file: {e}"))
-    })
+    // Serialization of our own structs cannot fail by construction; if it ever does,
+    // that is a bug, hence Internal.
+    serde_yaml_ng::to_string(&DataFile::new(cv, design))
+        .map_err(|e| crate::error::Error::Internal(format!("could not serialize data file: {e}")))
 }

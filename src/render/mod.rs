@@ -118,17 +118,13 @@ impl Engine {
                 .map(|(p, c)| (p.as_str(), c.clone())),
         );
 
-        let mut font_items: Vec<Vec<u8>> = Vec::new();
-        for (path, bytes) in fonts::collect_font_dir_files(&req.user_font_dirs)
-            .map_err(|e| RenderError::Font(e.to_string()))?
-        {
-            // Keep the path in the error message context if parsing ever fails.
-            let _ = path;
-            font_items.push(bytes);
-        }
-        for (_, bytes) in fonts::bundled_fonts() {
-            font_items.push(bytes.to_vec());
-        }
+        let mut font_items: Vec<Vec<u8>> = fonts::collect_font_dir_files(&req.user_font_dirs)
+            .map_err(|e| RenderError::Font(e.to_string()))?;
+        font_items.extend(
+            fonts::bundled_fonts()
+                .iter()
+                .map(|(_, bytes)| bytes.to_vec()),
+        );
 
         let engine = TypstEngine::builder()
             .with_static_source_file_resolver(sources)
@@ -161,7 +157,7 @@ impl Engine {
         let warnings: Vec<String> = warned
             .warnings
             .iter()
-            .map(|w| format!("typst warning: {}", w.message))
+            .map(|w| w.message.to_string())
             .collect();
 
         let doc = warned.output.map_err(|e| RenderError::Template {

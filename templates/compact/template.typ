@@ -11,8 +11,11 @@
 #let design = data.design
 #let fit = sys.inputs.at("fit", default: (font_scale: 1, spacing_scale: 1, margin_scale: 1))
 
-// {value, unit} objects from data.yaml → Typst lengths.
-#let to-length(x) = x.value * (if x.unit == "pt" { 1pt } else if x.unit == "cm" { 1cm } else if x.unit == "mm" { 1mm } else if x.unit == "in" { 1in } else { 0pt })
+// {value, unit} objects from data.yaml → Typst lengths. Unknown units fail the compile
+// loudly — they cannot occur in tool-generated data.yaml, so reaching the assert would
+// mean the data contract broke.
+#let unit-scale(unit) = if unit == "pt" { 1pt } else if unit == "cm" { 1cm } else if unit == "mm" { 1mm } else if unit == "in" { 1in } else { assert(false, message: "unknown length unit in data.yaml: " + unit); 1pt }
+#let to-length(x) = x.value * unit-scale(x.unit)
 
 #let page-width = if design.page == "letter" { 8.5in } else { 21cm }
 #let page-height = if design.page == "letter" { 11in } else { 29.7cm }

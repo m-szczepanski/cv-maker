@@ -11,7 +11,9 @@ pub enum Error {
         source: std::io::Error,
     },
 
-    /// A YAML file could not be parsed or deserialized into the model.
+    /// A YAML file could not be parsed or deserialized into the model. `context` is the
+    /// `serde_yaml_ng` message, which already includes the source line/column when known;
+    /// full span-labeled diagnostics arrive in M2.
     #[error("{context}")]
     Yaml {
         context: String,
@@ -26,6 +28,16 @@ pub enum Error {
     #[error("{0}")]
     Unsupported(String),
 
+    /// An internal invariant failed (unexpected serialization failure, malformed built-in
+    /// assets). User-visible so it is distinguishable from input errors; never silently
+    /// swallowed.
+    #[error("internal error: {0}")]
+    Internal(String),
+
+    /// Writing the output PDF failed.
+    #[error("could not write {path}: {message}")]
+    Write { path: String, message: String },
+
     /// Rendering failed (template errors, PDF export, fonts). `RenderError::Template`
     /// renders as "template error: …" so template problems stay distinct from user YAML
     /// errors (spec §5, plan 1.6.4).
@@ -34,24 +46,6 @@ pub enum Error {
 }
 
 impl Error {
-    /// Wrap a `serde_yaml_ng` error, appending the offending source line/column when the
-    /// error carries a location. Full span-labeled diagnostics arrive in M2.
-    pub fn yaml(source: serde_yaml_ng::Error, _yaml: &str) -> Self {
-        let location = source.location();
-        let context = match location {
-            Some(loc) => format!("at line {}, column {}", loc.line(), loc.column()),
-            None => String::new(),
-        };
-        let mut msg = source.to_string();
-        if !context.is_empty() {
-            msg = format!("{msg} ({context})");
-        }
-        Error::Yaml {
-            context: msg,
-            source,
-        }
-    }
-
     pub fn invalid_value(value: &str, expected: &str) -> Self {
         Error::InvalidValue {
             value: value.to_owned(),

@@ -220,45 +220,68 @@ impl schemars::JsonSchema for Color {
     }
 }
 
+/// Parse one ASCII hex digit, case-insensitive.
+fn hex_digit(d: u8) -> Option<u8> {
+    match d {
+        b'0'..=b'9' => Some(d - b'0'),
+        b'a'..=b'f' => Some(d - b'a' + 10),
+        b'A'..=b'F' => Some(d - b'A' + 10),
+        _ => None,
+    }
+}
+
 fn parse_color(s: &str) -> Result<Color> {
     let hex = s.strip_prefix('#').ok_or_else(|| {
         Error::invalid_value(s, "a hex color starting with '#', e.g. \"#2563eb\"")
     })?;
-    if hex.len() == 3 {
-        let mut rgb = [0u8; 3];
-        for (i, c) in hex.chars().enumerate() {
-            let v = u8::from_str_radix(&c.to_string(), 16)
-                .map_err(|_| Error::invalid_value(s, "hex digits (0-9, a-f)"))?;
-            rgb[i] = v * 17; // scale 0xf to 0xff
-        }
-        return Ok(Color::new(rgb[0], rgb[1], rgb[2]));
+    if !hex.is_ascii() {
+        return Err(Error::invalid_value(s, "hex digits (0-9, a-f)"));
     }
-    if hex.len() == 6 {
-        let r = u8::from_str_radix(&hex[0..2], 16);
-        let g = u8::from_str_radix(&hex[2..4], 16);
-        let b = u8::from_str_radix(&hex[4..6], 16);
-        if let (Ok(r), Ok(g), Ok(b)) = (r, g, b) {
-            return Ok(Color::new(r, g, b));
+    let digits = hex.as_bytes();
+
+    let pair = |bytes: &[u8]| -> Result<u8> {
+        let hi =
+            hex_digit(bytes[0]).ok_or_else(|| Error::invalid_value(s, "hex digits (0-9, a-f)"))?;
+        let lo =
+            hex_digit(bytes[1]).ok_or_else(|| Error::invalid_value(s, "hex digits (0-9, a-f)"))?;
+        Ok((hi << 4) | lo)
+    };
+
+    match digits.len() {
+        3 => {
+            let mut rgb = [0u8; 3];
+            for (i, d) in digits.iter().enumerate() {
+                let v = hex_digit(*d)
+                    .ok_or_else(|| Error::invalid_value(s, "hex digits (0-9, a-f)"))?;
+                rgb[i] = v * 17; // scale 0xf to 0xff
+            }
+            Ok(Color::new(rgb[0], rgb[1], rgb[2]))
         }
+        6 => Ok(Color::new(
+            pair(&digits[0..2])?,
+            pair(&digits[2..4])?,
+            pair(&digits[4..6])?,
+        )),
+        _ => Err(Error::invalid_value(
+            s,
+            "a hex color like \"#2563eb\" (6 digits) or \"#25b\" (3 digits)",
+        )),
     }
-    Err(Error::invalid_value(
-        s,
-        "a hex color like \"#2563eb\" (6 digits) or \"#25b\" (3 digits)",
-    ))
 }
 
 /// A unitless multiplier parsed from a plain YAML number (`1.25`).
 ///
 /// Distinct from [`Length`] because it carries no unit; used for `line_height` and,
-/// in the fit loop, for scale factors.
+/// in the fit loop, for scale factors. Must be positive (the JSON Schema says
+/// `exclusiveMinimum: 0`, so the parser enforces it too).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LineHeight(pub f64);
 
 impl<'de> Deserialize<'de> for LineHeight {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
         let v = f64::deserialize(deserializer)?;
-        if !v.is_finite() {
-            return Err(de::Error::custom("must be a finite number"));
+        if !v.is_finite() || v <= 0.0 {
+            return Err(de::Error::custom("must be a positive number"));
         }
         Ok(LineHeight(v))
     }

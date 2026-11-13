@@ -81,14 +81,14 @@ pub fn load_builtin(name: &str) -> Result<Template> {
 
     let utf8 = |bytes: &'static [u8], what: &str| -> Result<String> {
         String::from_utf8(bytes.to_vec()).map_err(|_| {
-            Error::Unsupported(format!(
+            Error::Internal(format!(
                 "built-in template '{name}' {what} is not valid UTF-8"
             ))
         })
     };
 
     let main_bytes = find("template.typ").ok_or_else(|| {
-        Error::Unsupported(format!(
+        Error::Internal(format!(
             "built-in template '{name}' has no template.typ (this is a bug in cv)"
         ))
     })?;
@@ -107,7 +107,7 @@ pub fn load_builtin(name: &str) -> Result<Template> {
     }
 
     let manifest_bytes = find("manifest.yaml").ok_or_else(|| {
-        Error::Unsupported(format!(
+        Error::Internal(format!(
             "built-in template '{name}' has no manifest.yaml (this is a bug in cv)"
         ))
     })?;
@@ -136,11 +136,13 @@ fn unknown_template_error(name: &str) -> Error {
 /// Closest known name by simple edit distance, for "did you mean" hints (full fuzzy
 /// matching lands with M2 validation).
 fn closest_match(name: &str, known: &[String]) -> Option<String> {
+    let name = name.to_lowercase();
     known
         .iter()
-        .min_by_key(|k| edit_distance(&name.to_lowercase(), &k.to_lowercase()))
-        .filter(|best| edit_distance(&name.to_lowercase(), &best.to_lowercase()) <= 2)
-        .cloned()
+        .map(|k| (edit_distance(&name, &k.to_lowercase()), k))
+        .min_by_key(|(distance, _)| *distance)
+        .filter(|(distance, _)| *distance <= 2)
+        .map(|(_, k)| k.clone())
 }
 
 fn edit_distance(a: &str, b: &str) -> usize {

@@ -36,8 +36,6 @@ pub struct Document {
 impl Document {
     /// Parse a YAML string into a [`Document`].
     pub fn from_yaml_str(yaml: &str) -> Result<Self> {
-        let value: serde_yaml_ng::Value =
-            serde_yaml_ng::from_str(yaml).map_err(|e| Error::yaml(e, yaml))?;
-        serde_yaml_ng::from_value(value).map_err(|e| Error::yaml(e, yaml))
+        serde_yaml_ng::from_str(yaml).map_err(Error::from)
     }
 }

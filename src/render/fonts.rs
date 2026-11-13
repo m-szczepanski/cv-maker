@@ -2,8 +2,9 @@
 //! directories from `design.font_paths` and `--font-path`.
 //!
 //! Priority order used for the Typst font book (docs/decisions.md ADR-0007):
-//! bundled → user directories → system fonts. Bundled fonts win over same-named system
-//! fonts so output stays reproducible across machines (spec §2 note).
+//! user directories → bundled fonts → system fonts. Explicit user intent wins;
+//! bundled fonts beat same-named system fonts so output stays reproducible across
+//! machines (spec §2 note).
 
 use std::path::{Path, PathBuf};
 
@@ -61,7 +62,7 @@ fn display_name_from_file(path: &str) -> String {
 
 /// Collect font files from user-provided directories (spec §8: `.ttf`/`.otf`).
 /// Non-recursive; directories are scanned in the order given, files sorted per directory.
-pub fn collect_font_dir_files(dirs: &[PathBuf]) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+pub fn collect_font_dir_files(dirs: &[PathBuf]) -> Result<Vec<Vec<u8>>> {
     let mut files = Vec::new();
     for dir in dirs {
         let entries = std::fs::read_dir(dir).map_err(|source| Error::Io {
@@ -84,7 +85,7 @@ pub fn collect_font_dir_files(dirs: &[PathBuf]) -> Result<Vec<(PathBuf, Vec<u8>)
                 path: path.display().to_string(),
                 source,
             })?;
-            files.push((path, bytes));
+            files.push(bytes);
         }
     }
     Ok(files)
