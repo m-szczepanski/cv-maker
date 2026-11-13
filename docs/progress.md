@@ -5,8 +5,8 @@ this file only records what is done. Mark a task `[x]` only when it is implement
 the Gates pass (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
 `cargo test` — run locally, ADR-0013). Strikethrough tasks are dropped decisions.
 
-- **Current state:** M1 implemented — Gates green; awaiting the human visual check (1.7.4)
-  and the M1 review stop, then M2 starts.
+- **Current state:** M2 implemented — Gates green; M1 human visual check (1.7.4) and the
+  M1 review stop still pending, plus the M2 review stop.
 
 ## Milestone 0 — Project bootstrap ✅
 
@@ -24,8 +24,7 @@ the Gates pass (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`
 - [x] 1.1.4 `JsonSchema` derived on everything
 - [x] 1.1.5 Model unit tests (example parses; missing design; unknown keys/types rejected)
 - [x] 1.2.1 YAML parsing keeping locations for later `miette` labels
-- [ ] 1.2.2 `thiserror` → `miette` at the CLI boundary *(thiserror done; conversion lands
-      with M2 diagnostics, per `src/error.rs`)*
+- [x] 1.2.2 `thiserror` → `miette` at the CLI boundary (done with M2 diagnostics)
 - [x] 1.3.1 `cv init` starter YAML (`--template`, `--out`, `--force`; ADR-0011)
 - [x] 1.3.2 `yaml-language-server` header line
 - [x] 1.3.3 Round-trip and no-overwrite tests
@@ -47,17 +46,26 @@ the Gates pass (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`
 - [x] 1.7.3 Atomic-write test (failing build leaves PDF untouched)
 - [ ] 1.7.4 **Human visual check** — render the starter CV and look at it; then M1 review
 
-## Milestone 2 — Validation and errors
+## Milestone 2 — Validation and errors 🔜 review
 
-- [ ] 2.1 Semantic checks in `src/validate/` (collect all errors)
-- [ ] 2.2 `miette` rendering with spans + "did you mean" hints
-- [ ] 2.3 `cv schema`; write `cv.schema.json` during `init`
-- [ ] 2.4 `cv check`
-- [ ] 2.5 Inline Markdown subset (per ADR-0008 direction)
-- [ ] 2.6 Escaping guarantee (security-relevant; mandatory escaping tests)
-- [ ] 2.7 Error snapshot tests (`insta`) with line/column
-- [ ] 2.8 Schema snapshot; `examples/minimal.yaml`, `examples/full.yaml`
-- [ ] 2.9 Every user-facing error class has a test
+- [x] 2.1 Semantic checks in `src/validate/`: fonts, template, URLs, schema version;
+      duplicate titles warn (ADR-0015); all errors collected (ADR-0014 span scan)
+- [x] 2.2 `miette` rendering with spans + "did you mean" hints (ADR-0018; spec §5 bar)
+- [x] 2.3 `cv schema`; `init` writes `cv.schema.json` (ADR-0019)
+- [x] 2.4 `cv check` (warnings never affect the exit code)
+- [x] 2.5 Inline Markdown subset (ADR-0016): `src/markdown.rs`, tokens in `data.yaml`,
+      `templates/compact/lib/inline.typ`
+- [x] 2.6 Escaping guarantee: user text only reaches Typst as literal strings/token
+      fields; covered by markdown parser tests + example PDF text extraction
+- [x] 2.7 Error snapshot tests (`insta`, `tests/errors.rs`) — message, line:column,
+      snippet and hint pinned
+- [x] 2.8 Schema snapshot; `examples/minimal.yaml` + `examples/full.yaml` (ADR-0020)
+- [x] 2.9 Every user-facing error class has a test (mapping documented in
+      `tests/errors.rs` docs)
+
+Measured coverage (`cargo llvm-cov`, end of M2): 97.2% lines; every remaining uncovered
+line is a defensive branch carrying an invariant comment (unreachable embedded assets,
+span-scan fallbacks, disk-failure paths), per `.AGENTS.md` rule 21.
 
 ## Milestone 3 — Design block
 
