@@ -5,10 +5,8 @@ this file only records what is done. Mark a task `[x]` only when it is implement
 the Gates pass (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
 `cargo test` — run locally, ADR-0013). Strikethrough tasks are dropped decisions.
 
-- **Current state:** M5 implemented — tasks 5.1–5.7 done, Gates green; 5.8 (human
-  visual review of `classic`) awaits sign-off (the agent rendered and inspected the
-  combos; see the M5 section). The M1 visual check (1.7.4) and the M1/M2 review
-  stops are still open.
+- **Current state:** M5 implemented — all tasks done, Gates green; M5 ready for
+  review/merge. The M1 visual check (1.7.4) and the M1/M2 review stops are still open.
 
 ## Milestone 0 — Project bootstrap 
 
@@ -126,10 +124,16 @@ tests in this commit.
       so PDF writes can't loop; catch-up rebuild; target re-derivation; ADR-0029)
 - [x] 5.7 Custom-template and watch tests (`tests/custom_template.rs`,
       `tests/watch.rs`; every user-facing template-load error class has a test)
-- [ ] 5.8 **Human visual review of `classic`** — starter (A4 + letter/red), the
-      `full` example, and a 14×2 overflowing CV fitted to one page were rendered
-      and inspected by the agent (fits, header rule + dividers look right);
-      awaiting the human pass.
+- [x] 5.8 **Human visual review of `classic`** — starter (A4 + letter/red), the
+      `full` example, and a 14×2 overflowing CV fitted to one page were rendered;
+      agent inspection plus human pass 2026-11-13, approved. One reviewer note:
+      the full-width divider lines in the templates are too heavy for taste —
+      deferred to a later styling pass (see M6 note below).
+
+M6 reviewer note (carried from the 5.8 pass): soften/remove the full-width
+`line()` dividers in the built-in templates (header rule + section dividers) —
+reviewer would like them lighter or gone; treat as template styling polish, not
+a schema/contract change.
 
 Measured coverage (`cargo llvm-cov`, end of M5): 96.6% lines. The residual
 uncovered lines are the documented defensive classes (unreachable embedded assets,
