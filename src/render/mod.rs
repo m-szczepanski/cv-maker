@@ -223,6 +223,7 @@ mod tests {
             template: crate::templates::Template {
                 name: "test".into(),
                 description: String::new(),
+                supported_options: vec![],
                 main_source: "#assert(false, message: \"boom\")".into(),
                 extra_sources: vec![],
             },

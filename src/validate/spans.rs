@@ -24,6 +24,16 @@ impl SpanMap {
     pub fn get(&self, path: &str) -> Option<ByteSpan> {
         self.spans.get(path).copied()
     }
+
+    /// The span of the first scalar at `path` or anywhere under it (`design.margins`
+    /// covers `design.margins.x`). Deterministic in path order — not necessarily the
+    /// source order of the user's keys.
+    pub fn first_used(&self, path: &str) -> Option<ByteSpan> {
+        let under = format!("{path}.");
+        self.spans
+            .range(path.to_owned()..)
+            .find_map(|(key, span)| (key == path || key.starts_with(&under)).then_some(*span))
+    }
 }
 
 /// Scan `yaml` and collect the byte span of every scalar value, addressed by path.
@@ -235,6 +245,23 @@ mod tests {
     fn missing_paths_return_none() {
         let map = scalar_spans(DOC);
         assert_eq!(map.get("cv.nonexistent"), None);
+    }
+
+    #[test]
+    fn first_used_covers_a_group_and_an_exact_scalar() {
+        let yaml = "design:\n  page: a4\n  margins: { x: 1cm, y: 1cm }\n";
+        let map = scalar_spans(yaml);
+        let (start, _) = map.first_used("design.page").expect("page is a scalar");
+        assert_eq!(&yaml[start..start + 2], "a4");
+        let (start, _) = map
+            .first_used("design.margins")
+            .expect("margins has scalars under it");
+        assert_eq!(&yaml[start..start + 3], "1cm", "first key in path order");
+        assert_eq!(map.first_used("design.spacing"), None, "nothing written");
+        assert!(
+            map.first_used("design").is_some(),
+            "a bare group with values under it counts as used"
+        );
     }
 
     #[test]

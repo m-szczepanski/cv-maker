@@ -310,6 +310,28 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
 - **Consequences:** ~400 KB test fixture in the repo; no production code paths depend
   on it.
 
+## ADR-0023 — Manifest enforcement is a warning keyed on "written in the YAML" (plan 3.5)
+
+- **Context:** Spec §6: "A template must honor all `design` fields listed in its
+  `manifest.yaml`. Fields it ignores must be declared as unsupported so `cv check` can
+  warn." Ambiguities: severity, what counts as "using" a field, and grouping.
+- **Decision:** `cv check`/`cv build` emit a **warning** (never an error, ADR-0015) per
+  design *group* (`page`, `margins`, `fonts`, `sizes`, `spacing`, `colors`) that the
+  YAML writes but the template's manifest does not declare in `supported`. "Written"
+  means the span scan (ADR-0014) saw any scalar at or under `design.<group>` — so an
+  explicit value equal to the default still warns: the user authored it and expects an
+  effect. The warning labels the first written value in path order. Tool-level fields
+  (`template`, `fit_one_page`, `fit_floor`, `font_paths`) are exempt: the tool consumes
+  them, templates cannot ignore them. If the template name itself is invalid the
+  support check is skipped — the unknown-template error already covers it.
+- **Rationale:** Group granularity matches the manifest vocabulary; presence-of-write
+  is the only definition that needs no defaults comparison and works with spans we
+  already collect.
+- **Consequences:** No shipped built-in can trigger the warning today (`compact`
+  declares all six groups — asserted by a test), so the behavior is pinned by unit
+  tests against a declared-minimal template and becomes CLI-visible from M5 with custom
+  templates.
+
 ## Open questions (spec §14) — status
 
 Assigned to milestones per the implementation plan; each gets an ADR when resolved.

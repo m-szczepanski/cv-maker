@@ -19,6 +19,9 @@ pub struct Template {
     pub name: String,
     /// One-line description from the manifest (used by `cv templates`).
     pub description: String,
+    /// `design.*` fields this template honors (plan 3.5); drives the `cv check`
+    /// warning for ignored fields (spec §6).
+    pub supported_options: Vec<String>,
     /// Content of the entry-point `template.typ`.
     pub main_source: String,
     /// Additional Typst sources, as (virtual path, content) pairs (e.g. `lib/inline.typ`).
@@ -120,6 +123,7 @@ pub fn load_builtin(name: &str) -> Result<Template> {
     Ok(Template {
         name: manifest.name,
         description: manifest.description,
+        supported_options: manifest.supported,
         main_source,
         extra_sources,
     })
@@ -132,7 +136,7 @@ fn unknown_template_error(name: &str) -> Error {
         None => format!("available templates: {}", known.join(", ")),
     };
     Error::Unsupported(format!(
-        "unknown template '{name}' ({hint}). In M1 only built-in templates can be used; custom template folders arrive in M5"
+        "unknown template '{name}' ({hint}). Only built-in templates can be used so far; custom template folders arrive in M5"
     ))
 }
 
