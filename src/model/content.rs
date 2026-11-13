@@ -30,6 +30,23 @@ pub struct Cv {
     pub sections: Vec<Section>,
 }
 
+impl Cv {
+    /// All `(index, url)` pairs from the contact links, in order — for URL validation.
+    pub fn links(&self) -> Vec<(usize, &str)> {
+        self.contact
+            .as_ref()
+            .and_then(|c| c.links.as_ref())
+            .map(|links| {
+                links
+                    .iter()
+                    .enumerate()
+                    .map(|(i, l)| (i, l.url.as_str()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
 /// Contact details.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

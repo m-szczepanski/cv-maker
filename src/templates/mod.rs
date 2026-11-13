@@ -81,6 +81,8 @@ pub fn load_builtin(name: &str) -> Result<Template> {
 
     let utf8 = |bytes: &'static [u8], what: &str| -> Result<String> {
         String::from_utf8(bytes.to_vec()).map_err(|_| {
+            // Unreachable for shipped assets: embedded files are compiled in and are
+            // valid UTF-8 by construction (checked by `cargo test` at least once).
             Error::Internal(format!(
                 "built-in template '{name}' {what} is not valid UTF-8"
             ))
@@ -88,6 +90,7 @@ pub fn load_builtin(name: &str) -> Result<Template> {
     };
 
     let main_bytes = find("template.typ").ok_or_else(|| {
+        // Unreachable: every template folder ships a template.typ (enforced by tests).
         Error::Internal(format!(
             "built-in template '{name}' has no template.typ (this is a bug in cv)"
         ))
@@ -107,6 +110,7 @@ pub fn load_builtin(name: &str) -> Result<Template> {
     }
 
     let manifest_bytes = find("manifest.yaml").ok_or_else(|| {
+        // Unreachable: every template folder ships a manifest.yaml (enforced by tests).
         Error::Internal(format!(
             "built-in template '{name}' has no manifest.yaml (this is a bug in cv)"
         ))
@@ -123,42 +127,13 @@ pub fn load_builtin(name: &str) -> Result<Template> {
 
 fn unknown_template_error(name: &str) -> Error {
     let known = builtin_names();
-    let suggestion = closest_match(name, &known);
-    let hint = match suggestion {
+    let hint = match crate::suggest::closest_match(name, &known) {
         Some(best) => format!("did you mean '{best}'?"),
         None => format!("available templates: {}", known.join(", ")),
     };
     Error::Unsupported(format!(
         "unknown template '{name}' ({hint}). In M1 only built-in templates can be used; custom template folders arrive in M5"
     ))
-}
-
-/// Closest known name by simple edit distance, for "did you mean" hints (full fuzzy
-/// matching lands with M2 validation).
-fn closest_match(name: &str, known: &[String]) -> Option<String> {
-    let name = name.to_lowercase();
-    known
-        .iter()
-        .map(|k| (edit_distance(&name, &k.to_lowercase()), k))
-        .min_by_key(|(distance, _)| *distance)
-        .filter(|(distance, _)| *distance <= 2)
-        .map(|(_, k)| k.clone())
-}
-
-fn edit_distance(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut cur = vec![0usize; b.len() + 1];
-    for i in 1..=a.len() {
-        cur[0] = i;
-        for j in 1..=b.len() {
-            let cost = usize::from(a[i - 1] != b[j - 1]);
-            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
-        }
-        std::mem::swap(&mut prev, &mut cur);
-    }
-    prev[b.len()]
 }
 
 #[cfg(test)]

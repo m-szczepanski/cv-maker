@@ -90,11 +90,28 @@ pub fn run(args: &InitArgs) -> Result<()> {
         )));
     }
 
-    std::fs::write(&args.out, STARTER_YAML).map_err(|source| Error::Io {
+    std::fs::write(&args.out, STARTER_YAML).map_err(|source| Error::Write {
         path: args.out.display().to_string(),
-        source,
+        message: source.to_string(),
     })?;
 
-    println!("wrote {}", args.out.display());
+    // Write the JSON Schema next to the YAML so the `$schema=./cv.schema.json` header
+    // works offline (plan 2.3, ADR-0019).
+    let schema_path = schema_path_for(&args.out);
+    std::fs::write(&schema_path, crate::commands::schema::schema_json()?).map_err(|source| {
+        Error::Write {
+            path: schema_path.display().to_string(),
+            message: source.to_string(),
+        }
+    })?;
+
+    println!("wrote {} (+ {})", args.out.display(), schema_path.display());
     Ok(())
+}
+
+/// The schema file lives next to the YAML file, same directory, fixed name (ADR-0019).
+fn schema_path_for(out: &Path) -> std::path::PathBuf {
+    out.parent()
+        .unwrap_or(Path::new("."))
+        .join("cv.schema.json")
 }
