@@ -85,8 +85,75 @@ fn short_cv_is_not_shrunk() {
     );
 }
 
-/// Plan 4.4: `--no-fit` disables the loop for the run — an overflowing CV is
-/// written as-is, reports `scale 1.00`, and gets no floor warning.
+/// Plan 4.5: same input → same applied scales and byte-identical PDFs, with the
+/// loop active (not just for first-fit documents).
+#[test]
+fn fitted_builds_are_deterministic() {
+    let dir = unique_dir("fit-determinism");
+    fs::write(dir.join("cv.yaml"), cv_yaml(14, 2)).expect("write yaml");
+
+    let (ok, a) = run_cv(&dir, &["build", "--output", "a.pdf"]);
+    let (ok2, b) = run_cv(&dir, &["build", "--output", "b.pdf"]);
+    assert!(ok && ok2, "got: {a} / {b}");
+    assert_eq!(
+        fit_note_of(&a),
+        fit_note_of(&b),
+        "same input must apply the same scales"
+    );
+    assert_eq!(
+        fs::read(dir.join("a.pdf")).expect("a.pdf"),
+        fs::read(dir.join("b.pdf")).expect("b.pdf"),
+        "a fitted build must stay byte-deterministic"
+    );
+}
+
+/// Plan 4.5 / spec §7: what the loop reports never crosses the floors defined
+/// for the default design (font ≥ 8.5pt of 9.5pt, spacing ≥ 0.6, margins ≥ 1 cm).
+#[test]
+fn fitted_scales_never_cross_the_floors() {
+    let dir = unique_dir("fit-floors");
+    fs::write(dir.join("cv.yaml"), cv_yaml(14, 2)).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
+    assert!(ok, "got: {out}");
+    let note = fit_note_of(&out);
+    let mut parsed = vec![];
+    let mut parts = note.split_whitespace();
+    while let Some(label) = parts.next() {
+        let value = parts
+            .next()
+            .unwrap_or_else(|| panic!("value after {label}"));
+        parsed.push((
+            label.to_lowercase(),
+            value.parse::<f64>().expect("scale number"),
+        ));
+    }
+    for (label, value) in &parsed {
+        let floor = match label.as_str() {
+            "scale" => 8.5 / 9.5 - 0.005, // %.2 display rounding
+            "spacing" => 0.6 - 0.005,
+            "margins" => 1.0 / 1.2 - 0.005,
+            other => panic!("unexpected scale label {other}"),
+        };
+        assert!(
+            (0.0..=1.0001).contains(value) && *value >= floor,
+            "{label} = {value} crossed the spec §7 floor"
+        );
+    }
+}
+
+/// Extract the stable `fit: ...` part of the success line (ADR-0025 format),
+/// without the timing suffix.
+fn fit_note_of(out: &str) -> String {
+    let start = out
+        .find("fit: ")
+        .unwrap_or_else(|| panic!("no fit note in: {out}"));
+    out[start + "fit: ".len()..]
+        .split("  (")
+        .next()
+        .expect("fit segment")
+        .to_owned()
+}
 #[test]
 fn no_fit_flag_skips_the_loop() {
     let dir = unique_dir("fit-nofit-flag");

@@ -92,7 +92,7 @@ covered.
 - [x] 4.2 Hard guarantees (max iterations, floor, determinism, least-aggressive)
 - [x] 4.3 Overflow-at-floor behavior + §14 exit-code decision (ADR)
 - [x] 4.4 `--no-fit`
-- [ ] 4.5 Fit-loop tests (termination, floor, determinism, no-shrink-when-fits)
+- [x] 4.5 Fit-loop tests (termination, floor, determinism, no-shrink-when-fits)
 - [ ] 4.6 Build < 500 ms; document measured time
 
 ## Milestone 5 — Templates and watch

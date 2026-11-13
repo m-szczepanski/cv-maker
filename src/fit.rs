@@ -533,6 +533,28 @@ mod tests {
     }
 
     #[test]
+    fn a_non_monotonic_predicate_still_returns_a_fitting_result_within_budget() {
+        // Adversarial layout: only `spacing_scale ∈ (0.74, 0.86)` fits —
+        // tightening past the window breaks the page again (the ADR-0024
+        // monotonicity caveat made visible). No grid probe lands on a window
+        // boundary, so the fake is float-stable. Guarantee under test: the
+        // returned setting fits, whatever the predicate shape, within budget.
+        let probes = Rc::new(RefCell::new(Vec::new()));
+        let config = default_config(true);
+        let in_window = |s: f64| s > 0.74 && s < 0.86;
+        let outcome = fake_session(&config, |p| in_window(p.spacing_scale), probes.clone())
+            .run()
+            .expect("compile");
+        assert!(
+            in_window(outcome.applied.spacing_scale),
+            "the returned setting must fit: {:?}",
+            outcome.applied
+        );
+        assert!(!outcome.overflowed);
+        assert_eq!(outcome.compiles, 1 + MAX_PHASE_PROBES);
+    }
+
+    #[test]
     fn a_compile_error_stops_the_search_immediately_and_propagates() {
         let config = default_config(true);
         let mut session = Session::new(&config, |params| {
