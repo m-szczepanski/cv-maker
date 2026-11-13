@@ -93,7 +93,11 @@ covered.
 - [x] 4.3 Overflow-at-floor behavior + §14 exit-code decision (ADR)
 - [x] 4.4 `--no-fit`
 - [x] 4.5 Fit-loop tests (termination, floor, determinism, no-shrink-when-fits)
-- [ ] 4.6 Build < 500 ms; document measured time
+- [x] 4.6 Build < 500 ms; document measured time — release build on the dev machine
+      (Apple silicon): typical first-fit **197 ms** (233 ms first run incl. warm-up),
+      a fitted shrink build 216 ms, worst-case 13-compile overflow fit 309 ms.
+      Spec §12 M4 target met; the extra probes are cheap because fonts, the template
+      and the compiler state load once per build (plan 1.4.4).
 
 ## Milestone 5 — Templates and watch
 
