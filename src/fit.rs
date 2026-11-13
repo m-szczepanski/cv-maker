@@ -270,6 +270,7 @@ mod tests {
             pdf: vec![b'%'],
             page_count,
             warnings: Vec::new(),
+            overflow_lines: page_count.saturating_sub(1) * 3,
         }
     }
 

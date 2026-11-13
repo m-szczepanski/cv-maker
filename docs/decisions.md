@@ -389,6 +389,29 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
 - **Rationale:** one stable prefix for scripts (`fit: scale `), full observability of
   what the loop did, no behavior change for the common case.
 
+## ADR-0026 — Overflow at the floor: PDF written, exit 0, loud warning (plan 4.3)
+
+- **Context:** Spec §7 step 4 and §14: when content still overflows at the floors,
+  the PDF is written and a clear warning printed; the exit code was the open
+  question ("0-with-warning vs. a dedicated non-zero code").
+- **Decision:** **exit 0 with a warning**. Message (stderr, miette warning handler,
+  also under `--quiet` per ADR-0012): `content still overflows at the fit floor:
+  about N lines spill onto P extra page(s); cut content (e.g. bullets or paragraphs)
+  or relax design.fit_floor / margins`. `N` counts shaped text runs on the overflow
+  pages (computed in `src/render/` as `RenderOutput::overflow_lines`; a slight
+  over-estimate for style-mixed lines, explicitly worded as "about"). The success
+  line still reports the pages and the exact floor scales.
+- **Rationale:** spec §3 ties non-zero exit to "any *error*", and an overflowed
+  build produces the requested PDF — it is a result, not a failure. ADR-0015
+  already fixed warnings as exit-code-neutral; a special code would be a second,
+  contradicting rule ("warnings never affect the exit code" vs. "this warning
+  does"). CI that must fail on overflow can grep the line or assert the page count
+  from the success line; if that turns out to matter in practice, adding a code 2
+  later is one line in `main` and does not change this contract's shape.
+- **Consequences:** §14 exit-code question closed; the floor probe's PDF (the most
+  aggressive compile) is always what gets written on overflow, so the user still
+  gets the closest possible one-pager's content, over multiple pages.
+
 ## Open questions (spec §14) — status
 
 Assigned to milestones per the implementation plan; each gets an ADR when resolved.
@@ -396,7 +419,7 @@ Assigned to milestones per the implementation plan; each gets an ADR when resolv
 | Question | Status |
 |---|---|
 | Inline Markdown: tool-structured vs. Typst helper | **decided in M1 (ADR-0008): tool-structured; M1 ships plain text** |
-| Exit code when content can't fit at the floor | open — decide in M4 (step 4.3) |
+| Exit code when content can't fit at the floor | **decided in M4 (ADR-0026): 0 with a loud warning** |
 | Tagged PDF / accessibility support in pinned `typst-pdf` | **checked in M1 (ADR-0009): tagged PDFs on; standards finalized M6** |
 | `cv init` role-tuned examples vs. one neutral example | open — decide in M6 (step 6.2) |
 | Per-job variants (`--variant`) | out of scope for v1; keep model extensible |

@@ -47,6 +47,12 @@ pub struct RenderOutput {
     pub page_count: usize,
     /// Typst warnings (e.g. unknown font family). Empty when the compile was clean.
     pub warnings: Vec<String>,
+    /// Shaped text runs on pages beyond the first (0 for one page) — the
+    /// "about N lines" figure of the fit-overflow warning (spec §7 step 4,
+    /// ADR-0026). One run is one style span within a line, so lines mixing
+    /// styles (Markdown tokens) count slightly high; it is an approximation
+    /// offered only in human text, never a contract value.
+    pub overflow_lines: usize,
 }
 
 /// Errors from the render layer (spec §5: template errors are labeled separately from
@@ -170,12 +176,37 @@ impl Engine {
             // not reachable from user input or template bugs.
             .map_err(|diags| RenderError::Pdf(format_diags(&diags)))?;
 
+        let page_count = doc.pages().len();
         Ok(RenderOutput {
-            page_count: doc.pages().len(),
             pdf,
+            page_count,
             warnings,
+            overflow_lines: if page_count > 1 {
+                doc.pages()
+                    .iter()
+                    .skip(1)
+                    .map(|page| count_text_runs(&page.frame))
+                    .sum()
+            } else {
+                0
+            },
         })
     }
+}
+
+/// Count shaped text runs in a laid-out frame, descending into transform groups.
+/// Typst builds one `Text` frame item per style span of a line (verified against
+/// the pinned 0.15.1 `FrameItem` docs), so this is the overflow-lines proxy of
+/// ADR-0026, computed where Typst types are allowed to live (spec §13.7).
+fn count_text_runs(frame: &typst::layout::Frame) -> usize {
+    frame
+        .items()
+        .map(|(_, item)| match item {
+            typst::layout::FrameItem::Group(group) => count_text_runs(&group.frame),
+            typst::layout::FrameItem::Text(_) => 1,
+            _ => 0,
+        })
+        .sum()
 }
 
 /// Build the `sys.inputs` dict the template reads: `sys.inputs.fit.font_scale` etc.
@@ -218,23 +249,10 @@ mod tests {
     use super::*;
     use crate::error::Error;
 
-    fn broken_template_request() -> RenderRequest {
-        RenderRequest {
-            template: crate::templates::Template {
-                name: "test".into(),
-                description: String::new(),
-                supported_options: vec![],
-                main_source: "#assert(false, message: \"boom\")".into(),
-                extra_sources: vec![],
-            },
-            data_yaml: "cv: {}".into(),
-            user_font_dirs: vec![],
-        }
-    }
-
     #[test]
     fn template_compile_errors_are_labeled_and_formatted_with_hints() {
-        let error = render(&broken_template_request()).expect_err("broken template must fail");
+        let error = render(&test_request("#assert(false, message: \"boom\")"))
+            .expect_err("broken template must fail");
         let message = error.to_string();
         assert!(
             message.contains("template error:"),
@@ -248,7 +266,8 @@ mod tests {
 
     #[test]
     fn template_error_label_reaches_the_cli_report() {
-        let error = render(&broken_template_request()).expect_err("broken template must fail");
+        let error = render(&test_request("#assert(false, message: \"boom\")"))
+            .expect_err("broken template must fail");
         let rendered = crate::error::report(&Error::Render(error), false);
         assert!(
             rendered.contains("Error: template error:"),
@@ -300,5 +319,39 @@ mod tests {
             "Unspecified: missing main file!",
             "non-diagnostic errors render through their Display impl"
         );
+    }
+
+    fn test_request(main_source: &str) -> RenderRequest {
+        RenderRequest {
+            template: crate::templates::Template {
+                name: "test".into(),
+                description: String::new(),
+                supported_options: vec![],
+                main_source: main_source.into(),
+                extra_sources: vec![],
+            },
+            data_yaml: "cv: {}".into(),
+            user_font_dirs: vec![],
+        }
+    }
+
+    #[test]
+    fn overflowing_compiles_count_text_runs_past_the_first_page() {
+        let output = render(&test_request("#set page(height: 2cm)\n#lorem(400)"))
+            .expect("plain typst source renders");
+        assert!(output.page_count > 2, "got {} pages", output.page_count);
+        assert!(
+            output.overflow_lines >= output.page_count - 1,
+            "every overflow page carries at least one text run, got {}",
+            output.overflow_lines
+        );
+    }
+
+    #[test]
+    fn single_page_compile_has_no_overflow_lines() {
+        let output = render(&test_request("#set page(height: 5cm)\n#lorem(20)"))
+            .expect("plain typst source renders");
+        assert_eq!(output.page_count, 1);
+        assert_eq!(output.overflow_lines, 0);
     }
 }

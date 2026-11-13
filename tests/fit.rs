@@ -84,3 +84,52 @@ fn short_cv_is_not_shrunk() {
         "a first-fit CV must report scale 1.00 without tightening details, got: {out}"
     );
 }
+
+/// Plan 4.3 / ADR-0026: impossible content still writes the PDF and exits 0,
+/// with a warning stating the overflow and the suggestion; the success line
+/// shows the exact floors.
+#[test]
+fn impossible_content_still_builds_with_a_warning_and_exit_zero() {
+    let dir = unique_dir("fit-overflow");
+    fs::write(dir.join("cv.yaml"), cv_yaml(60, 1)).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
+    assert!(
+        ok,
+        "overflow must not fail the build (ADR-0026), got: {out}"
+    );
+    assert!(
+        out.contains("content still overflows at the fit floor"),
+        "the warning must be printed, got: {out}"
+    );
+    assert!(
+        out.contains("spill onto") && out.contains("relax design.fit_floor"),
+        "the warning must quantify the spill and suggest a fix, got: {out}"
+    );
+    assert!(
+        out.contains("fit: scale 0.89 spacing 0.60 margins 0.83"),
+        "the line must report the exact floors for the default design, got: {out}"
+    );
+
+    let pages = pdf_extract::extract_text_by_pages(dir.join("cv.pdf")).expect("text");
+    assert!(pages.len() > 1, "the overflowed PDF is still written");
+}
+
+/// The overflow warning is an essential (ADR-0026/0012): `--quiet` drops the
+/// success line but keeps the warning.
+#[test]
+fn quiet_still_prints_the_overflow_warning() {
+    let dir = unique_dir("fit-overflow-quiet");
+    fs::write(dir.join("cv.yaml"), cv_yaml(60, 1)).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["--quiet", "build", "--output", "cv.pdf"]);
+    assert!(ok, "got: {out}");
+    assert!(
+        out.contains("content still overflows at the fit floor"),
+        "warning survives --quiet, got: {out}"
+    );
+    assert!(
+        !out.contains("cv.pdf  "),
+        "the success line must be suppressed under --quiet, got: {out}"
+    );
+}
