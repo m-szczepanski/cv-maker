@@ -316,13 +316,11 @@ Goal: README, exit codes, release binaries.
       (including the fit-overflow code decided in 4.3).
 - [ ] 6.2 Finalize `docs/decisions.md`: every §14 open question answered or explicitly
       deferred, each with a short rationale.
-- [ ] 6.3 ~~Release CI~~ — adjusted (ADR-0013): release builds for Linux, macOS (x64 + arm64),
-      Windows are produced locally/manually. Verify each artifact
-      runs on a clean machine (no Typst install, no fonts install needed — bundled assets
-      must make the binary self-sufficient).
-- [ ] 6.4 Fresh-machine test: download a release binary, run the quick start end-to-end.
-- [ ] 6.5 Full audit pass against the spec: walk §3–§11 section by section and confirm each
+- [ ] 6.3 Fresh-machine test: download a release binary, run the quick start end-to-end.
+- [ ] 6.4 Full audit pass against the spec: walk §3–§11 section by section and confirm each
       requirement has an implementation and (where applicable) a test. Fix or file gaps.
+- [ ] 6.5 Review the code if it comes to code comments and code quality.
+- [ ] Remove the horizontal line dividers in templates as we do not want that as our templates should be very clean, minimal and slick.
 
 **Accept (spec M6):** a fresh machine can run the quick start using only the downloaded binary.
 
