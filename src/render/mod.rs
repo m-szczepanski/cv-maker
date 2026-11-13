@@ -27,7 +27,7 @@ use typst_pdf::{PdfOptions, PdfStandards};
 
 use crate::templates::Template;
 
-pub use data::{FitData, page_name};
+pub use data::page_name;
 pub use fonts::{FontListing, FontSource, available_fonts, bundled_fonts};
 
 /// Everything needed to compile a CV once (plan 1.4.2).
@@ -71,8 +71,9 @@ pub enum RenderError {
     Font(String),
 }
 
-/// Fit-loop scale factors (spec §7), passed to the template through `sys.inputs.fit`.
-/// M1 always passes the identity; the fit loop (M4) drives these.
+/// Fit-loop scale factors (spec §7), passed to the template through `sys.inputs.fit`
+/// (never through `data.yaml`, ADR-0006). The fit loop (`src/fit.rs`) drives these;
+/// the identity means "no scaling".
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FitParams {
     pub font_scale: f64,
@@ -90,17 +91,8 @@ impl Default for FitParams {
     }
 }
 
-impl From<FitParams> for FitData {
-    fn from(p: FitParams) -> Self {
-        FitData {
-            font_scale: p.font_scale,
-            spacing_scale: p.spacing_scale,
-            margin_scale: p.margin_scale,
-        }
-    }
-}
-
-/// One-shot render (spec §9). The fit loop (M4) will hold an [`Engine`] across iterations.
+/// One-shot render (spec §9), used by tests. `cv build` compiles through
+/// [`Engine`] directly so the fit loop can reuse it across iterations.
 pub fn render(req: &RenderRequest) -> std::result::Result<RenderOutput, RenderError> {
     Engine::build(req)?.compile(FitParams::default())
 }
@@ -273,18 +265,6 @@ mod tests {
             rendered.contains("Error: template error:"),
             "got: {rendered}"
         );
-    }
-
-    #[test]
-    fn fit_params_convert_into_fit_data() {
-        let data = FitData::from(FitParams {
-            font_scale: 0.9,
-            spacing_scale: 0.8,
-            margin_scale: 1.0,
-        });
-        assert_eq!(data.font_scale, 0.9);
-        assert_eq!(data.spacing_scale, 0.8);
-        assert_eq!(data.margin_scale, 1.0);
     }
 
     #[test]

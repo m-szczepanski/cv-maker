@@ -209,16 +209,21 @@ fn design_fit_one_page_false_skips_the_loop() {
 
 /// Plan 4.3 / ADR-0026: impossible content still writes the PDF and exits 0,
 /// with a warning stating the overflow and the suggestion; the success line
-/// shows the exact floors.
+/// shows the exact floors. The verbose telemetry proves the real-engine fit
+/// ran exactly the documented worst-case probe budget.
 #[test]
 fn impossible_content_still_builds_with_a_warning_and_exit_zero() {
     let dir = unique_dir("fit-overflow");
     fs::write(dir.join("cv.yaml"), cv_yaml(60, 1)).expect("write yaml");
 
-    let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
+    let (ok, out) = run_cv(&dir, &["--verbose", "build", "--output", "cv.pdf"]);
     assert!(
         ok,
         "overflow must not fail the build (ADR-0026), got: {out}"
+    );
+    assert!(
+        out.contains("cv: fit: 13 compiles"),
+        "A(5+1) + B(5+1) + identity is the hard bound (ADR-0024), got: {out}"
     );
     assert!(
         out.contains("content still overflows at the fit floor"),

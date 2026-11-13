@@ -72,6 +72,11 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   keeps fit iterations cheap (input change only).
 - **Consequences:** `src/render/data.rs` defines the exact template-facing schema. Template
   authors see only resolved values (no defaults logic, no user-facing string forms).
+- **Amendment (M4 review):** the decision text says `data.yaml` carries `cv` + `design` +
+  `fit` scales, but the fit scales were *only ever* delivered through `sys.inputs.fit`; the
+  serialized `fit:` block was a permanently-identity duplicate that became actively
+  misleading once the loop produced non-1.0 scales. `data.yaml` now carries `cv` + `design`
+  only; `sys.inputs.fit` is the single fit channel.
 
 ## ADR-0007 — Font priority: bundled → user dirs → system (plan 1.4.3, spec §2 vs §8)
 
