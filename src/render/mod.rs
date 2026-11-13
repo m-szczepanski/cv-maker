@@ -67,7 +67,7 @@ pub enum RenderError {
 
 /// Fit-loop scale factors (spec §7), passed to the template through `sys.inputs.fit`.
 /// M1 always passes the identity; the fit loop (M4) drives these.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FitParams {
     pub font_scale: f64,
     pub spacing_scale: f64,
