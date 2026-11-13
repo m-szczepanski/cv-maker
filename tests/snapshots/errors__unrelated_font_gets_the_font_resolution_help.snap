@@ -1,0 +1,12 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  × unknown font "Zzzzqx"
+   ╭─[cv.yaml:6:11]
+ 5 │   fonts:
+ 6 │     body: Zzzzqx
+   ·           ───┬──
+   ·              ╰── this font family
+   ╰────
+  help: fonts are resolved from --font-path directories, then bundled fonts, then system fonts

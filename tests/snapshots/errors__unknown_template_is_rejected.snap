@@ -1,0 +1,12 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  × unknown template 'compactt'
+   ╭─[cv.yaml:5:13]
+ 4 │ design:
+ 5 │   template: compactt
+   ·             ────┬───
+   ·                 ╰── this template name
+   ╰────
+  help: did you mean 'compact'?

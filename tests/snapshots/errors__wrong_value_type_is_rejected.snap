@@ -1,0 +1,11 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  × schema: invalid type: string "one", expected u32 at line 1 column 9
+   ╭─[cv.yaml:1:9]
+ 1 │ schema: "one"
+   ·         ┬
+   ·         ╰── here
+ 2 │ cv:
+   ╰────

@@ -1,0 +1,12 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  ⚠ section title "Work" is also used for section(s) 1
+   ╭─[cv.yaml:5:14]
+ 4 │   sections:
+ 5 │     - title: Work
+   ·              ──┬─
+   ·                ╰── first occurrence
+ 6 │       type: text
+   ╰────

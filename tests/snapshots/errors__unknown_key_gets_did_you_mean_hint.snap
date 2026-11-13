@@ -1,0 +1,13 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  × cv: unknown field `nmae`, expected one of `name`, `headline`, `location`, `contact`,
+  │ `summary`, `sections` at line 3 column 3
+   ╭─[cv.yaml:3:3]
+ 2 │ cv:
+ 3 │   nmae: Jane Doe
+   ·   ┬
+   ·   ╰── here
+   ╰────
+  help: did you mean 'name'?
