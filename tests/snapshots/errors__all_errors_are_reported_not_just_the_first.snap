@@ -1,0 +1,41 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  × unsupported schema version 2
+   ╭─[cv.yaml:1:9]
+ 1 │ schema: 2
+   ·         ┬
+   ·         ╰── this schema version
+ 2 │ cv:
+   ╰────
+  help: this tool understands schema version 1
+
+  × unknown template 'compactt'
+    ╭─[cv.yaml:9:13]
+  8 │ design:
+  9 │   template: compactt
+    ·             ────┬───
+    ·                 ╰── this template name
+ 10 │   fonts:
+    ╰────
+  help: did you mean 'compact'?
+
+  × unknown font "Inte"
+    ╭─[cv.yaml:11:11]
+ 10 │   fonts:
+ 11 │     body: Inte
+    ·           ──┬─
+    ·             ╰── this font family
+    ╰────
+  help: did you mean "Inter"?
+
+  × malformed URL "github.com/me"
+   ╭─[cv.yaml:7:14]
+ 6 │       - label: Site
+ 7 │         url: github.com/me
+   ·              ──────┬──────
+   ·                    ╰── this link URL
+ 8 │ design:
+   ╰────
+  help: URLs must start with http:// or https:// and include a host

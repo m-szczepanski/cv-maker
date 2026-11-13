@@ -178,6 +178,56 @@ fn line_height_must_be_a_positive_number() {
 }
 
 #[test]
+fn lengths_display_in_their_unit_without_trailing_zeros() {
+    assert_eq!(Length::new(1.5, LengthUnit::Cm).to_string(), "1.5cm");
+    assert_eq!(Length::new(20.0, LengthUnit::Pt).to_string(), "20pt");
+    assert_eq!(Length::new(2.0, LengthUnit::Mm).to_string(), "2mm");
+    assert_eq!(Length::new(0.5, LengthUnit::In).to_string(), "0.5in");
+}
+
+#[test]
+fn length_type_errors_name_the_expected_shape() {
+    // A non-scalar value fails with the visitor's `expecting` text.
+    let err = serde_yaml_ng::from_str::<Length>("[1]").expect_err("sequence is not a length");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("a length like \"1.5cm\""),
+        "error should explain lengths, got: {msg}"
+    );
+}
+
+#[test]
+fn length_value_errors_name_the_problem() {
+    // A unit with no number.
+    let err = serde_yaml_ng::from_str::<Length>("\"pt\"").expect_err("unit without a number");
+    assert!(
+        err.to_string().contains("a number followed by a unit"),
+        "got: {err}"
+    );
+
+    // A number too large for f64 (400 digits overflow to infinity).
+    let huge = format!("{}cm", "9".repeat(400));
+    let err = serde_yaml_ng::from_str::<Length>(&huge).expect_err("must be finite");
+    assert!(err.to_string().contains("a finite number"), "got: {err}");
+}
+
+#[test]
+fn colors_display_as_lowercase_hex() {
+    assert_eq!(Color::new(0x25, 0x63, 0xeb).to_string(), "#2563eb");
+    assert_eq!(Color::new(0x00, 0x0a, 0xff).to_string(), "#000aff");
+}
+
+#[test]
+fn color_type_errors_name_the_expected_shape() {
+    let err = serde_yaml_ng::from_str::<Color>("[1]").expect_err("sequence is not a color");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("a hex color like \"#2563eb\""),
+        "error should explain colors, got: {msg}"
+    );
+}
+
+#[test]
 fn empty_sections_list_is_valid() -> Result<()> {
     let yaml = "schema: 1\ncv:\n  name: Jane Doe\n  sections: []\n";
     let doc = Document::from_yaml_str(yaml)?;

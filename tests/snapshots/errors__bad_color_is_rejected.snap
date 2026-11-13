@@ -1,0 +1,12 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  × design.colors.accent: invalid value "#zzzzzz": expected hex digits (0-9, a-f) at line 6 column
+  │ 13
+   ╭─[cv.yaml:6:13]
+ 5 │   colors:
+ 6 │     accent: "#zzzzzz"
+   ·             ┬
+   ·             ╰── here
+   ╰────

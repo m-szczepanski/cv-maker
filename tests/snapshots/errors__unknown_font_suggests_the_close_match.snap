@@ -1,0 +1,12 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  × unknown font "Inte"
+   ╭─[cv.yaml:6:11]
+ 5 │   fonts:
+ 6 │     body: Inte
+   ·           ──┬─
+   ·             ╰── this font family
+   ╰────
+  help: did you mean "Inter"?

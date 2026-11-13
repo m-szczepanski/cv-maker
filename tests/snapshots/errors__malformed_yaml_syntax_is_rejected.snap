@@ -1,0 +1,11 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  × cv.name: invalid type: sequence, expected a string at line 3 column 9
+   ╭─[cv.yaml:3:9]
+ 2 │ cv:
+ 3 │   name: [unclosed
+   ·         ┬
+   ·         ╰── here
+   ╰────

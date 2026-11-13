@@ -7,6 +7,9 @@
 pub mod cli;
 pub mod commands;
 pub mod error;
+pub mod markdown;
 pub mod model;
 pub mod render;
+pub mod suggest;
 pub mod templates;
+pub mod validate;

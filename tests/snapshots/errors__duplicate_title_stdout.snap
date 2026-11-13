@@ -1,0 +1,5 @@
+---
+source: tests/errors.rs
+expression: stdout
+---
+cv.yaml is valid (1 warning)

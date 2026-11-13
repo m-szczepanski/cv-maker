@@ -1,0 +1,5 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+Error: could not read no-such.yaml: No such file or directory (os error 2)

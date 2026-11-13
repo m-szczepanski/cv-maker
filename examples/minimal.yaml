@@ -1,0 +1,6 @@
+# yaml-language-server: $schema=./cv.schema.json
+# Minimal valid CV: everything optional is omitted; design falls back to defaults.
+schema: 1
+
+cv:
+  name: Jane Doe

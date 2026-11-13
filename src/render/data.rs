@@ -10,12 +10,17 @@
 
 use serde::Serialize;
 
-use crate::model::{Cv, Design, Page};
+use crate::markdown::MdString;
+use crate::model::{Contact, Cv, Design, Page};
 
 /// The document handed to templates: `cv`, resolved `design`, and the `fit` scales.
+///
+/// The `cv` block is mirrored into template-facing structs: the Markdown-enabled fields
+/// (summary, bullets, text items — ADR-0016) serialize as token lists, everything else
+/// passes through verbatim.
 #[derive(Debug, Serialize)]
 pub struct DataFile<'a> {
-    pub cv: &'a Cv,
+    pub cv: CvData<'a>,
     pub design: DesignData<'a>,
     pub fit: FitData,
 }
@@ -23,9 +28,110 @@ pub struct DataFile<'a> {
 impl<'a> DataFile<'a> {
     pub fn new(cv: &'a Cv, design: &'a Design) -> Self {
         Self {
-            cv,
+            cv: CvData::from(cv),
             design: DesignData::from(design),
             fit: FitData::default(),
+        }
+    }
+}
+
+/// Template-facing `cv`: plain fields stay plain, Markdown fields become token lists.
+#[derive(Debug, Serialize)]
+pub struct CvData<'a> {
+    pub name: &'a str,
+    pub headline: Option<&'a str>,
+    pub location: Option<&'a str>,
+    pub contact: Option<&'a Contact>,
+    pub summary: Option<MdString<'a>>,
+    pub sections: Vec<SectionData<'a>>,
+}
+
+impl<'a> From<&'a Cv> for CvData<'a> {
+    fn from(cv: &'a Cv) -> Self {
+        Self {
+            name: &cv.name,
+            headline: cv.headline.as_deref(),
+            location: cv.location.as_deref(),
+            contact: cv.contact.as_ref(),
+            summary: cv.summary.as_deref().map(MdString),
+            sections: cv.sections.iter().map(SectionData::from).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct SectionData<'a> {
+    pub title: &'a str,
+    #[serde(flatten)]
+    pub body: SectionBodyData<'a>,
+}
+
+impl<'a> From<&'a crate::model::Section> for SectionData<'a> {
+    fn from(section: &'a crate::model::Section) -> Self {
+        Self {
+            title: &section.title,
+            body: SectionBodyData::from(&section.body),
+        }
+    }
+}
+
+/// The tagged section body, re-tagged so `data.yaml` keeps the same `type` key.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SectionBodyData<'a> {
+    Entries {
+        items: Vec<EntryItemData<'a>>,
+    },
+    KeyValues {
+        items: Vec<&'a crate::model::KeyValueItem>,
+    },
+    Bullets {
+        items: Vec<MdString<'a>>,
+    },
+    Text {
+        items: Vec<MdString<'a>>,
+    },
+}
+
+impl<'a> From<&'a crate::model::SectionBody> for SectionBodyData<'a> {
+    fn from(body: &'a crate::model::SectionBody) -> Self {
+        match body {
+            crate::model::SectionBody::Entries { items } => Self::Entries {
+                items: items.iter().map(EntryItemData::from).collect(),
+            },
+            crate::model::SectionBody::KeyValues { items } => Self::KeyValues {
+                items: items.iter().collect(),
+            },
+            crate::model::SectionBody::Bullets { items } => Self::Bullets {
+                items: items.iter().map(|b| MdString(b.as_str())).collect(),
+            },
+            crate::model::SectionBody::Text { items } => Self::Text {
+                items: items.iter().map(|t| MdString(t.as_str())).collect(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct EntryItemData<'a> {
+    pub heading: &'a str,
+    pub org: Option<&'a str>,
+    pub location: Option<&'a str>,
+    pub dates: Option<&'a str>,
+    pub bullets: Option<Vec<MdString<'a>>>,
+}
+
+impl<'a> From<&'a crate::model::EntryItem> for EntryItemData<'a> {
+    fn from(item: &'a crate::model::EntryItem) -> Self {
+        Self {
+            heading: &item.heading,
+            org: item.org.as_deref(),
+            location: item.location.as_deref(),
+            dates: item.dates.as_deref(),
+            bullets: item
+                .bullets
+                .as_ref()
+                .map(|bullets| bullets.iter().map(|b| MdString(b.as_str())).collect()),
         }
     }
 }
@@ -162,4 +268,100 @@ pub fn to_yaml(cv: &Cv, design: &Design) -> crate::error::Result<String> {
     // that is a bug, hence Internal.
     serde_yaml_ng::to_string(&DataFile::new(cv, design))
         .map_err(|e| crate::error::Error::Internal(format!("could not serialize data file: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Document;
+
+    const SOURCE: &str = concat!(
+        "schema: 1\n",
+        "cv:\n",
+        "  name: Jane Doe\n",
+        "  summary: staff **engineer** at [Acme](https://acme.dev)\n",
+        "  sections:\n",
+        "    - title: Work\n",
+        "      type: entries\n",
+        "      items:\n",
+        "        - heading: Staff Engineer\n",
+        "          bullets:\n",
+        "            - led the *rewrite*\n",
+        "            - plain bullet\n",
+        "    - title: Skills\n",
+        "      type: key_values\n",
+        "      items:\n",
+        "        - key: Rust\n",
+        "          value: strong\n",
+        "    - title: Points\n",
+        "      type: bullets\n",
+        "      items:\n",
+        "        - first `point`\n",
+        "    - title: About\n",
+        "      type: text\n",
+        "      items:\n",
+        "        - writes **docs**\n",
+        "design:\n",
+        "  template: compact\n",
+    );
+
+    #[test]
+    fn markdown_fields_serialize_as_token_lists() -> crate::error::Result<()> {
+        let doc = Document::from_yaml_str(SOURCE)?;
+        let yaml = to_yaml(&doc.cv, &doc.design)?;
+
+        assert!(
+            yaml.contains("kind: bold") && yaml.contains("text: engineer"),
+            "summary bold token expected, got:\n{yaml}"
+        );
+        assert!(
+            yaml.contains("kind: italic") && yaml.contains("text: rewrite"),
+            "entry bullet italic token expected, got:\n{yaml}"
+        );
+        assert!(
+            yaml.contains("kind: code") && yaml.contains("text: point"),
+            "bullets-section code token expected, got:\n{yaml}"
+        );
+        assert!(
+            yaml.contains("text: plain bullet"),
+            "plain bullet must still be a text token, got:\n{yaml}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn links_in_markdown_serialize_with_url() -> crate::error::Result<()> {
+        let doc = Document::from_yaml_str(SOURCE)?;
+        let yaml = to_yaml(&doc.cv, &doc.design)?;
+        assert!(
+            yaml.contains("kind: link") && yaml.contains("url: https://acme.dev"),
+            "link token with url expected, got:\n{yaml}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn non_markdown_fields_stay_literal_strings() -> crate::error::Result<()> {
+        let doc = Document::from_yaml_str(SOURCE)?;
+        let yaml = to_yaml(&doc.cv, &doc.design)?;
+        assert!(
+            yaml.contains("title: Work"),
+            "titles stay plain, got:\n{yaml}"
+        );
+        assert!(
+            yaml.contains("heading: Staff Engineer"),
+            "headings stay plain"
+        );
+        assert!(yaml.contains("key: Rust"), "keys stay plain");
+        assert!(yaml.contains("value: strong"), "values stay plain");
+        Ok(())
+    }
+
+    #[test]
+    fn page_serializes_as_its_lowercase_name() -> crate::error::Result<()> {
+        let doc = Document::from_yaml_str("schema: 1\ncv:\n  name: X\ndesign:\n  page: letter\n")?;
+        let yaml = to_yaml(&doc.cv, &doc.design)?;
+        assert!(yaml.contains("page: letter"), "got:\n{yaml}");
+        Ok(())
+    }
 }

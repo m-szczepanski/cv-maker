@@ -43,6 +43,21 @@ fn global_flags_are_listed() {
     }
 }
 
+/// `--verbose` is accepted and announces itself on stderr.
+#[test]
+fn verbose_mode_announces_itself() {
+    let output = cv()
+        .args(["--verbose", "schema"])
+        .output()
+        .expect("binary runs");
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("verbose mode on"),
+        "stderr must announce verbose mode, got: {stderr}"
+    );
+}
+
 #[test]
 fn build_exposes_its_flags() {
     let output = cv()
@@ -74,7 +89,7 @@ fn init_exposes_its_flags() {
 
 #[test]
 fn unimplemented_commands_exit_non_zero_and_say_so() {
-    for args in [["templates"], ["schema"], ["fonts"]] {
+    for args in [["templates"], ["fonts"], ["watch"]] {
         let output = cv().args(args).output().expect("binary runs");
         assert!(
             !output.status.success(),
@@ -86,6 +101,26 @@ fn unimplemented_commands_exit_non_zero_and_say_so() {
             stderr.contains("not implemented yet"),
             "`cv {}` must state it is unimplemented; stderr:\n{stderr}",
             args[0]
+        );
+    }
+}
+
+/// Plan 2.3: `cv schema` prints the derived JSON Schema and succeeds.
+#[test]
+fn schema_prints_derived_json_schema() {
+    let output = cv().arg("schema").output().expect("binary runs");
+    assert!(output.status.success(), "`cv schema` must succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"$schema\"") && stdout.contains("json-schema.org"),
+        "output must look like a JSON Schema, got:\n{}",
+        &stdout[..stdout.len().min(400)]
+    );
+    // The schema is derived from the model, so its properties mirror the YAML document.
+    for property in ["\"schema\"", "\"cv\"", "\"design\"", "additionalProperties"] {
+        assert!(
+            stdout.contains(property),
+            "schema must mention `{property}`"
         );
     }
 }

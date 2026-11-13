@@ -1,0 +1,547 @@
+---
+source: tests/examples.rs
+expression: schema
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Document",
+  "description": "The top-level YAML document (spec §4): `schema`, `cv`, `design`.",
+  "type": "object",
+  "properties": {
+    "cv": {
+      "description": "The CV content.",
+      "$ref": "#/$defs/Cv"
+    },
+    "design": {
+      "description": "Presentation settings. Optional; missing values fall back to Rust-defined defaults.",
+      "$ref": "#/$defs/Design",
+      "default": {
+        "colors": {
+          "accent": "#2563eb",
+          "muted": "#555555",
+          "text": "#111111"
+        },
+        "fit_floor": {
+          "min_body_size": "8.5pt",
+          "min_scale": 0.85
+        },
+        "fit_one_page": true,
+        "font_paths": [],
+        "fonts": {
+          "body": "Inter",
+          "heading": "Inter",
+          "mono": "JetBrains Mono"
+        },
+        "margins": {
+          "x": "1.5cm",
+          "y": "1.2cm"
+        },
+        "page": "a4",
+        "sizes": {
+          "body": "9.5pt",
+          "heading": "11pt",
+          "name": "20pt",
+          "small": "8.5pt"
+        },
+        "spacing": {
+          "entry_gap": "4pt",
+          "line_height": 1.25,
+          "section_gap": "8pt"
+        },
+        "template": "compact"
+      }
+    },
+    "schema": {
+      "description": "Schema version. Only `1` is understood (semantic check enforces this).",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "cv"
+  ],
+  "$defs": {
+    "Color": {
+      "type": "string",
+      "examples": [
+        "#2563eb"
+      ],
+      "pattern": "^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$"
+    },
+    "Colors": {
+      "description": "Colors used by templates (spec §4).",
+      "type": "object",
+      "properties": {
+        "accent": {
+          "$ref": "#/$defs/Color",
+          "default": "#2563eb"
+        },
+        "muted": {
+          "$ref": "#/$defs/Color",
+          "default": "#555555"
+        },
+        "text": {
+          "$ref": "#/$defs/Color",
+          "default": "#111111"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Contact": {
+      "description": "Contact details.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "links": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/Link"
+          }
+        },
+        "phone": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "Cv": {
+      "description": "The CV content.",
+      "type": "object",
+      "properties": {
+        "contact": {
+          "description": "Email, phone, and links.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Contact"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "headline": {
+          "description": "Short role statement under the name.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "location": {
+          "description": "Where the person is based.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "name": {
+          "description": "Full name. Used for the document title/author metadata too (spec §9).",
+          "type": "string"
+        },
+        "sections": {
+          "description": "Ordered content sections. An empty list is valid.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Section"
+          }
+        },
+        "summary": {
+          "description": "Short professional summary paragraph.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "Design": {
+      "description": "Presentation settings (spec §4 design block).",
+      "type": "object",
+      "properties": {
+        "colors": {
+          "$ref": "#/$defs/Colors",
+          "default": {
+            "accent": "#2563eb",
+            "muted": "#555555",
+            "text": "#111111"
+          }
+        },
+        "fit_floor": {
+          "$ref": "#/$defs/FitFloor",
+          "default": {
+            "min_body_size": "8.5pt",
+            "min_scale": 0.85
+          }
+        },
+        "fit_one_page": {
+          "description": "Enable the one-page fitting loop (spec §7).",
+          "type": "boolean",
+          "default": true
+        },
+        "font_paths": {
+          "description": "Extra directories with .ttf/.otf files, relative to the YAML file.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "fonts": {
+          "$ref": "#/$defs/Fonts",
+          "default": {
+            "body": "Inter",
+            "heading": "Inter",
+            "mono": "JetBrains Mono"
+          }
+        },
+        "margins": {
+          "$ref": "#/$defs/Margins",
+          "default": {
+            "x": "1.5cm",
+            "y": "1.2cm"
+          }
+        },
+        "page": {
+          "description": "Page size.",
+          "$ref": "#/$defs/Page",
+          "default": "a4"
+        },
+        "sizes": {
+          "$ref": "#/$defs/Sizes",
+          "default": {
+            "body": "9.5pt",
+            "heading": "11pt",
+            "name": "20pt",
+            "small": "8.5pt"
+          }
+        },
+        "spacing": {
+          "$ref": "#/$defs/Spacing",
+          "default": {
+            "entry_gap": "4pt",
+            "line_height": 1.25,
+            "section_gap": "8pt"
+          }
+        },
+        "template": {
+          "description": "Built-in template name or relative path to a custom template folder.",
+          "type": "string",
+          "default": "compact"
+        }
+      },
+      "additionalProperties": false
+    },
+    "EntryItem": {
+      "description": "One `entries` item.",
+      "type": "object",
+      "properties": {
+        "bullets": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "default": null,
+          "items": {
+            "type": "string"
+          }
+        },
+        "dates": {
+          "description": "Free-form string (spec §4: no locale-aware date handling).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "heading": {
+          "description": "Role or degree title.",
+          "type": "string"
+        },
+        "location": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "org": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "heading"
+      ]
+    },
+    "FitFloor": {
+      "description": "Lower bounds for the one-page fit loop (spec §7).",
+      "type": "object",
+      "properties": {
+        "min_body_size": {
+          "$ref": "#/$defs/Length",
+          "default": "8.5pt"
+        },
+        "min_scale": {
+          "type": "number",
+          "format": "double",
+          "default": 0.85
+        }
+      },
+      "additionalProperties": false
+    },
+    "Fonts": {
+      "description": "Font families used by templates (spec §4).",
+      "type": "object",
+      "properties": {
+        "body": {
+          "type": "string",
+          "default": "Inter"
+        },
+        "heading": {
+          "type": "string",
+          "default": "Inter"
+        },
+        "mono": {
+          "type": "string",
+          "default": "JetBrains Mono"
+        }
+      },
+      "additionalProperties": false
+    },
+    "KeyValueItem": {
+      "description": "One `key_values` item.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "value"
+      ]
+    },
+    "Length": {
+      "type": "string",
+      "examples": [
+        "1.5cm",
+        "9.5pt"
+      ],
+      "pattern": "^[0-9]+(\\.[0-9]+)?(pt|cm|mm|in)$"
+    },
+    "Link": {
+      "description": "A labeled external link.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "url"
+      ]
+    },
+    "Margins": {
+      "description": "Horizontal and vertical page margins.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "$ref": "#/$defs/Length",
+          "default": "1.5cm"
+        },
+        "y": {
+          "$ref": "#/$defs/Length",
+          "default": "1.2cm"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Page": {
+      "description": "Page size (spec §4: `a4 | letter`).",
+      "type": "string",
+      "enum": [
+        "a4",
+        "letter"
+      ]
+    },
+    "Section": {
+      "description": "One content section: a title plus type-specific items (spec §4 content model).\n\nNote: `deny_unknown_fields` is deliberately omitted here because it is incompatible\nwith `#[serde(flatten)]` (the tag key `type` is consumed by [`SectionBody`]). Unknown\nkeys are still rejected: the remaining map is forwarded to the tagged enum, whose\nvariant structs carry `deny_unknown_fields`.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        }
+      },
+      "oneOf": [
+        {
+          "description": "heading/org/location/dates/bullets items (experience, education).",
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/EntryItem"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "entries"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "key/value rows (skills).",
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/KeyValueItem"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "key_values"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Flat bullet list.",
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "bullets"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Paragraph text. Each item is one paragraph.",
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "text"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        }
+      ],
+      "required": [
+        "title"
+      ]
+    },
+    "Sizes": {
+      "description": "Font sizes (spec §4).",
+      "type": "object",
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/Length",
+          "default": "9.5pt"
+        },
+        "heading": {
+          "$ref": "#/$defs/Length",
+          "default": "11pt"
+        },
+        "name": {
+          "$ref": "#/$defs/Length",
+          "default": "20pt"
+        },
+        "small": {
+          "$ref": "#/$defs/Length",
+          "default": "8.5pt"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Spacing": {
+      "description": "Vertical rhythm settings (spec §4).",
+      "type": "object",
+      "properties": {
+        "entry_gap": {
+          "$ref": "#/$defs/Length",
+          "default": "4pt"
+        },
+        "line_height": {
+          "description": "Unitless line-height multiplier (e.g. `1.25`).",
+          "$ref": "#/$defs/UnitlessNumber",
+          "default": 1.25
+        },
+        "section_gap": {
+          "$ref": "#/$defs/Length",
+          "default": "8pt"
+        }
+      },
+      "additionalProperties": false
+    },
+    "UnitlessNumber": {
+      "type": "number",
+      "exclusiveMinimum": 0.0
+    }
+  }
+}

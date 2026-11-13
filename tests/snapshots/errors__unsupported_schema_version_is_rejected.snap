@@ -1,0 +1,12 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  × unsupported schema version 2
+   ╭─[cv.yaml:1:9]
+ 1 │ schema: 2
+   ·         ┬
+   ·         ╰── this schema version
+ 2 │ cv:
+   ╰────
+  help: this tool understands schema version 1

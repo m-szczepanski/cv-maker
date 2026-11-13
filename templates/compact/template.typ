@@ -10,6 +10,7 @@
 #let cv = data.cv
 #let design = data.design
 #let fit = sys.inputs.at("fit", default: (font_scale: 1, spacing_scale: 1, margin_scale: 1))
+#import "lib/inline.typ": inline
 
 // {value, unit} objects from data.yaml → Typst lengths. Unknown units fail the compile
 // loudly — they cannot occur in tool-generated data.yaml, so reaching the assert would
@@ -69,7 +70,7 @@
   if item.location != none { midline.push(text(fill: muted, item.location)) }
   let dates = if item.dates != none { text(size: small-size, fill: muted)[#item.dates] } else { none }
   let mid = if midline.len() > 0 { text(size: small-size)[#midline.join(text(fill: muted, "  ·  "))] } else { none }
-  let bullets = if item.bullets != none { list(..item.bullets, spacing: entry-gap * 0.5, tight: true) } else { none }
+  let bullets = if item.bullets != none { list(..item.bullets.map(inline), spacing: entry-gap * 0.5, tight: true) } else { none }
   block(spacing: entry-gap, breakable: false)[
     #grid(
       columns: (1fr, auto),
@@ -117,7 +118,7 @@
 
 #if cv.summary != none [
   #v(section-gap * 0.5)
-  #par[#cv.summary]
+  #par[#inline(cv.summary)]
 ]
 
 // ---- Sections --------------------------------------------------------------------
@@ -140,9 +141,9 @@
           )
         }
       } else if section.type == "bullets" {
-        list(..section.items, spacing: entry-gap * 0.6, tight: true)
+        list(..section.items.map(inline), spacing: entry-gap * 0.6, tight: true)
       } else if section.type == "text" {
-        for paragraph in section.items { par[#paragraph] }
+        for paragraph in section.items { par[#inline(paragraph)] }
       }
     }
   ]

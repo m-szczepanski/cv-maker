@@ -1,0 +1,12 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  × design.margins.x: invalid value "em": expected one of the units pt, cm, mm, in at line 5
+  │ column 17
+   ╭─[cv.yaml:5:17]
+ 4 │ design:
+ 5 │   margins: { x: 1.5em, y: 1cm }
+   ·                 ┬
+   ·                 ╰── here
+   ╰────

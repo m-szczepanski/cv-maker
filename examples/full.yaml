@@ -1,0 +1,77 @@
+# yaml-language-server: $schema=./cv.schema.json
+# Full example: every v1 content and design field, including the inline Markdown subset
+# (`**bold**`, `*italic*`, `` `code` ``, `[label](url)`).
+schema: 1
+
+cv:
+  name: Jane Doe
+  headline: Staff **engineer** with *shipped products*
+  location: Berlin, Germany
+  contact:
+    email: jane@example.dev
+    phone: "+49 000 000000"
+    links:
+      - { label: GitHub, url: "https://github.com/janedoe" }
+      - { label: Website, url: "https://janedoe.dev" }
+
+  summary: >
+    Backend engineer focused on high-throughput systems. I write about
+    [engineering practice](https://janedoe.dev) and enjoy `hard` performance work.
+
+  sections:
+    - title: Experience
+      type: entries
+      items:
+        - heading: Staff Engineer
+          org: Acme Corp
+          location: Remote
+          dates: 2021 – present
+          bullets:
+            - Cut p99 latency by 40% by moving the hot path to Rust
+            - Led a 6-person team through a **zero-downtime** migration
+        - heading: Senior Engineer
+          org: Globex
+          dates: 2016 – 2021
+          bullets:
+            - Built the internal *observability* platform
+    - title: Skills
+      type: key_values
+      items:
+        - { key: Languages, value: "Rust, Go, Python, TypeScript" }
+        - { key: Infrastructure, value: "Kubernetes, Postgres, Kafka" }
+    - title: Highlights
+      type: bullets
+      items:
+        - Speaker at RustConf 2023
+        - Maintainer of an OSS library with 1k stars
+    - title: About
+      type: text
+      items:
+        - I like clear systems and clear writing.
+        - Reach me any time — I answer *fast*.
+
+design:
+  template: compact
+  page: a4
+  margins: { x: 1.5cm, y: 1.2cm }
+  fonts:
+    body: Inter
+    heading: Inter
+    mono: JetBrains Mono
+  sizes:
+    name: 20pt
+    heading: 11pt
+    body: 9.5pt
+    small: 8.5pt
+  spacing:
+    section_gap: 8pt
+    entry_gap: 4pt
+    line_height: 1.25
+  colors:
+    accent: "#2563eb"
+    text: "#111111"
+    muted: "#555555"
+  fit_one_page: true
+  fit_floor:
+    min_body_size: 7pt
+    min_scale: 0.8

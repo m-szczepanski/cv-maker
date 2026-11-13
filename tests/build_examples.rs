@@ -132,6 +132,41 @@ fn build_reports_template_errors_distinctly() {
     );
 }
 
+/// `design.font_paths` entries resolve relative to the YAML file's directory (spec §4).
+#[test]
+fn design_font_paths_resolve_relative_to_the_yaml() {
+    let dir = unique_dir("font-paths-rel");
+    assert!(run_cv(&dir, &["init"]).0);
+
+    // A font directory next to cv.yaml; the file content does not matter for discovery
+    // (an unloadable file is simply not a resolvable family, never a crash).
+    fs::create_dir(dir.join("fonts")).expect("create font dir");
+    fs::write(dir.join("fonts/fake.ttf"), b"not a real font").expect("write fake font");
+
+    let yaml_path = dir.join("cv.yaml");
+    let yaml = fs::read_to_string(&yaml_path).expect("read starter");
+    let with_paths = yaml.replace("design:", "design:\n  font_paths:\n    - fonts");
+    fs::write(&yaml_path, with_paths).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["check", "cv.yaml"]);
+    assert!(
+        ok,
+        "an existing relative font dir must be accepted, got: {out}"
+    );
+
+    // A missing relative dir must fail and name the directory (spec §8).
+    let yaml = fs::read_to_string(&yaml_path).expect("read starter");
+    let broken = yaml.replace("- fonts", "- no-such-fonts");
+    fs::write(&yaml_path, broken).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["check", "cv.yaml"]);
+    assert!(!ok, "a missing design.font_paths dir must fail, got: {out}");
+    assert!(
+        out.contains("no-such-fonts"),
+        "error must name the directory, got: {out}"
+    );
+}
+
 /// Writing the PDF fails cleanly when the destination is unusable (e.g. `--output`
 /// pointing at a directory): typed error, no panic, and no temp files left behind.
 #[test]
@@ -156,5 +191,20 @@ fn build_fails_cleanly_when_output_is_a_directory() {
     assert!(
         leftovers.is_empty(),
         "failed persist must clean up its temp file: {leftovers:?}"
+    );
+}
+
+/// `--output` into a directory that does not exist: the temp file cannot be created, so
+/// the build fails with a typed I/O error naming the directory (spec §3, §13.9).
+#[test]
+fn build_fails_cleanly_when_the_output_directory_is_missing() {
+    let dir = unique_dir("output-missing-dir");
+    run_cv(&dir, &["init"]);
+
+    let (ok, out) = run_cv(&dir, &["build", "--output", "no-such-dir/cv.pdf"]);
+    assert!(!ok, "missing output dir must fail, got: {out}");
+    assert!(
+        out.contains("no-such-dir"),
+        "error should name the missing directory, got: {out}"
     );
 }

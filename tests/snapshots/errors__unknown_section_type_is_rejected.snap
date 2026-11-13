@@ -1,0 +1,13 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  × cv.sections[0]: unknown variant `gallery`, expected one of `entries`, `key_values`, `bullets`,
+  │ `text` at line 5 column 7
+   ╭─[cv.yaml:5:7]
+ 4 │   sections:
+ 5 │     - title: Projects
+   ·       ┬
+   ·       ╰── here
+ 6 │       type: gallery
+   ╰────

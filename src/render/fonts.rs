@@ -9,8 +9,10 @@
 use std::path::{Path, PathBuf};
 
 use include_dir::{Dir, include_dir};
+use typst_as_lib::{TypstEngine, typst_kit_options::TypstKitFontOptions};
 
 use crate::error::{Error, Result};
+use crate::render::RenderError;
 
 /// All files in `fonts/`, embedded at compile time.
 pub static BUNDLED_FONT_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/fonts");
@@ -41,6 +43,39 @@ pub fn bundled_family_names() -> Vec<String> {
         .iter()
         .map(|(name, _)| display_name_from_file(name))
         .collect()
+}
+
+/// Every font family the compiler can resolve, in ADR-0007 priority order
+/// (user dirs → bundled → system), sorted and de-duplicated (plan 2.1, spec §5:
+/// "font family exists"). This is exactly the set Typst would match against at
+/// render time, so validation and rendering cannot disagree.
+pub fn available_font_families(
+    user_font_dirs: &[PathBuf],
+) -> std::result::Result<Vec<String>, RenderError> {
+    let mut font_items: Vec<Vec<u8>> =
+        collect_font_dir_files(user_font_dirs).map_err(|e| RenderError::Font(e.to_string()))?;
+    font_items.extend(bundled_fonts().iter().map(|(_, bytes)| bytes.to_vec()));
+
+    // A minimal engine: same font setup as a real build (see `Engine::build`), with an
+    // empty main source — we only need the world's font book, never a compile.
+    let engine = TypstEngine::builder()
+        .with_static_source_file_resolver([("main.typ", "")])
+        .fonts(font_items)
+        .search_fonts_with(TypstKitFontOptions::new())
+        .build();
+
+    engine
+        .with_world("main.typ", |world| {
+            let book = typst::World::book(world);
+            let mut families: Vec<String> = book
+                .families()
+                .map(|(family, _)| family.to_string())
+                .collect();
+            families.sort();
+            families.dedup();
+            families
+        })
+        .map_err(|e| RenderError::Font(format!("could not enumerate fonts: {e}")))
 }
 
 /// `Inter-Regular.ttf` → `Inter`; `JetBrainsMono-SemiBold.ttf` → `JetBrains Mono`.
@@ -89,4 +124,81 @@ pub fn collect_font_dir_files(dirs: &[PathBuf]) -> Result<Vec<Vec<u8>>> {
         }
     }
     Ok(files)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_family_names_includes_the_bundled_set() {
+        let names = bundled_family_names();
+        assert!(names.contains(&"Inter".to_owned()), "got: {names:?}");
+        assert!(
+            names.contains(&"JetBrains Mono".to_owned()),
+            "camel-case names are split: {names:?}"
+        );
+    }
+
+    #[test]
+    fn bundled_fonts_are_sorted_by_file_name() {
+        let fonts = bundled_fonts();
+        assert!(!fonts.is_empty(), "fonts/ must ship at least one font");
+        let mut names: Vec<&str> = fonts.iter().map(|(n, _)| *n).collect();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        names.sort_unstable();
+        assert_eq!(names, sorted, "deterministic order (ADR-0007)");
+    }
+
+    #[test]
+    fn display_names_derive_from_file_stems() {
+        assert_eq!(display_name_from_file("Inter-Regular.ttf"), "Inter");
+        assert_eq!(
+            display_name_from_file("JetBrainsMono-Bold.ttf"),
+            "JetBrains Mono"
+        );
+        assert_eq!(
+            display_name_from_file("IBMPlexSans-Medium.otf"),
+            "IBM Plex Sans"
+        );
+    }
+
+    #[test]
+    fn collect_font_dir_files_reads_only_font_files_sorted() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("b.ttf"), b"font-b").expect("write b");
+        std::fs::write(dir.path().join("a.otf"), b"font-a").expect("write a");
+        std::fs::write(dir.path().join("notes.txt"), b"ignored").expect("write txt");
+
+        let files = collect_font_dir_files(&[dir.path().to_path_buf()]).expect("collect works");
+        assert_eq!(files.len(), 2, "only .ttf/.otf count, sorted");
+        assert_eq!(&files[0], b"font-a", "sorted by file name");
+        assert_eq!(&files[1], b"font-b");
+    }
+
+    #[test]
+    fn collect_font_dir_files_fails_for_a_missing_directory() {
+        let err = collect_font_dir_files(&["/cv-test/no-such-fonts".into()])
+            .expect_err("missing dir must fail");
+        assert!(
+            err.to_string().contains("no-such-fonts"),
+            "error names the directory: {err}"
+        );
+    }
+
+    #[test]
+    fn collect_font_dir_files_fails_when_a_font_entry_cannot_be_read() {
+        // A directory named `fake.ttf` passes the extension filter but cannot be read
+        // as a file: the error must name the entry, not panic.
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir(dir.path().join("fake.ttf")).expect("create entry dir");
+
+        let err = collect_font_dir_files(&[dir.path().to_path_buf()])
+            .expect_err("unreadable entry must fail");
+        assert!(
+            err.to_string().contains("fake.ttf"),
+            "error names it: {err}"
+        );
+    }
 }

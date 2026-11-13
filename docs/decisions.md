@@ -160,6 +160,107 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
 
 ---
 
+## ADR-0014 — YAML spans: typed parse via serde_yaml_ng, span scan via saphyr-parser (M2)
+
+- **Context:** M2 needs span-labeled `miette` diagnostics (spec §5), but `serde_yaml_ng`
+  exposes locations only on `Error` (`error.location()`), not per-value spans to
+  deserializers — span-carrying typed deserialization is not possible with the pinned
+  YAML crate.
+- **Decision:** Two-track parsing (plan 1.2.1 allowed this choice). Track 1 (unchanged):
+  `serde_yaml_ng` deserializes into the typed model; its errors carry a (line, column)
+  location converted into a diagnostic span. Track 2: a lightweight event scan with
+  `saphyr-parser 0.3` (`SpannedEventReceiver`) builds a map from value paths (e.g.
+  `design.fonts.body`, `cv.sections[0].title`) to byte spans; semantic checks in
+  `src/validate/` look up the span of the value they reject.
+- **Rationale:** A full span-carrying model duplicate would double the model code; the
+  path map only needs to cover scalars, which is ~100 lines. `saphyr-parser` is the
+  maintained YAML 1.2 event parser and is a parse-only dependency (no serde coupling).
+- **Consequences:** Parse errors (unknown key, wrong type, bad value string) are reported
+  one at a time (serde stops at the first); semantic checks collect *all* errors of their
+  class (spec §5). New dependency `saphyr-parser` justified in `Cargo.toml`.
+
+## ADR-0015 — Warnings exist; duplicate section titles are a warning (plan 2.1)
+
+- **Context:** Plan 2.1 asks whether duplicate section titles should be an error or a
+  warning-level diagnostic; the spec's diagnostics model otherwise only knows errors.
+- **Decision:** Validation returns two lists: errors and warnings. Warnings are rendered
+  through the same `miette` graphical handler with `severity: Warning`; they are printed
+  by `build` and `check` to stderr and never change the exit code. Duplicate section
+  titles are the first warning (the first occurrence's span is labeled, or the model
+  index when no span is available).
+- **Rationale:** A duplicate title renders fine; failing the build would be hostile, but
+  silently ignoring it hides real mistakes. This also gives the fit loop (M4) a place to
+  put overflow warnings later.
+
+## ADR-0016 — Inline Markdown: flat tool-parsed token list in `data.yaml` (spec §4, §14)
+
+- **Context:** ADR-0008 fixed the direction for M2: the tool pre-parses inline Markdown
+  into a small typed structure that `data.yaml` carries, and templates interpret it.
+- **Decision:** The tool parses the subset (`**bold**`, `*italic*`, `` `code` ``,
+  `[label](url)`) into a flat, non-nested token list
+  (`{kind: text|bold|italic|code|link, text: "...", url: "..."}`) and serializes it in
+  place of the raw string for the fields that support Markdown: `cv.summary`, `bullets`
+  inside `entries` items, `bullets` section items, and `text` section items. Headings,
+  orgs, dates, keys and titles stay plain literal text. Templates render tokens via a
+  shared helper (`templates/*/lib/inline.typ`). Unknown or unclosed markers are literal
+  text; markers inside token contents (no nesting) are literal text.
+- **Rationale:** Flat tokens keep both the parser and the Typst helper trivial, and every
+  piece of user text still reaches Typst as a `str` value displayed in content — strings
+  render literally, so the escaping guarantee (spec §4, plan 2.6) holds without any
+  character-level escaping table that could have holes.
+
+## ADR-0017 — URL validation: small built-in checker, no `url` crate (plan 2.1)
+
+- **Context:** Semantic checks must reject malformed link URLs (spec §5).
+- **Decision:** A ~30-line validator: scheme must be `http` or `https`, the rest must
+  contain a non-empty host part, and no spaces or control characters are allowed.
+- **Rationale:** Rule "prefer std; if one small function is all you need, write it and
+  test it". A full RFC 3986 parser adds a dependency for a check the spec only asks to be
+  "well formed"; false positives would block legitimate URLs, so the checker stays
+  conservative (rejects clearly broken input only).
+
+## ADR-0018 — Diagnostic rendering: miette graphical handler, fixed width, warnings as essentials (plan 2.2)
+
+- **Context:** The CLI boundary must render `miette` diagnostics (plan 1.2.2, spec §5
+  quality bar) deterministically enough to snapshot-test.
+- **Decision:** Errors are rendered with `GraphicalReportHandler` in the unicode,
+  no-color theme at a fixed width (100 columns), one report per diagnostic. Color is
+  enabled only when stderr is a terminal (`std::io::IsTerminal`); snapshots always render
+  without color. Warnings use the same handler.
+- **Amendment (after seeing real output):** The plan's "prefixed with `Error:`" does not
+  apply: the graphical handler writes its own header per severity (`×` for errors, `⚠`
+  for warnings) instead of a text prefix, and shows the source snippet below it. The
+  header is accepted as the error marker; the spec §5 bar (message + span + "did you
+  mean" hint) is met. Errors of *other* classes (I/O, write, render — no source span)
+  still render as plain `Error: <message>` lines.
+- **Rationale:** A fixed width and no color make `insta` snapshots stable across machines
+  and CI-less environments; keeping one code path for both severities keeps output
+  consistent (ADR-0012 already classifies warnings as essentials).
+
+## ADR-0019 — `cv schema` output and `cv init` schema file (plan 2.3)
+
+- **Context:** Plan 2.3: print the derived JSON Schema on `cv schema` and write
+  `cv.schema.json` during `init` so the editor header works offline.
+- **Decision:** `cv schema` prints `schema_for!(Document)` pretty-printed to stdout.
+  `cv init` additionally writes `cv.schema.json` next to the `--out` file (same
+  directory); `--force` overwrites both. The exact byte content of both is covered by an
+  insta snapshot so accidental schema changes are reviewable.
+- **Rationale:** The header line is `$schema=./cv.schema.json` relative to the YAML file,
+  so writing the schema beside the YAML keeps editor tooling working for non-default
+  `--out` locations too.
+
+## ADR-0020 — Example validation without a JSON-Schema validator crate (plan 2.8)
+
+- **Context:** Plan 2.8 asks that every `examples/` file validates against the schema.
+  The schema is *derived* (`schemars`) from the same serde structs the parser uses.
+- **Decision:** Examples are validated through the typed parse plus semantic checks
+  (`cv check`), not by running the JSON Schema through a validator crate. The `examples/`
+  tests also build each example and assert one page, and `tests/errors.rs` covers every
+  rejection the schema (and the model) can express.
+- **Rationale:** Schema validation via a separate validator would add a dependency
+  (`jsonschema`) for a check strictly weaker than the typed parse — any document
+  failing the schema fails `Document::from_yaml_str` too, since both share the model.
+
 ## Open questions (spec §14) — status
 
 Assigned to milestones per the implementation plan; each gets an ADR when resolved.

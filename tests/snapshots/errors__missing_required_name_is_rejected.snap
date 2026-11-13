@@ -1,0 +1,11 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  × cv: missing field `name` at line 3 column 3
+   ╭─[cv.yaml:3:3]
+ 2 │ cv:
+ 3 │   headline: X
+   ·   ┬
+   ·   ╰── here
+   ╰────

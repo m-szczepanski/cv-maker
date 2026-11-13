@@ -41,6 +41,7 @@ pub struct RenderRequest {
 }
 
 /// One compile's result (spec §9).
+#[derive(Debug)]
 pub struct RenderOutput {
     pub pdf: Vec<u8>,
     pub page_count: usize,
@@ -159,12 +160,14 @@ impl Engine {
             .iter()
             .map(|w| w.message.to_string())
             .collect();
-
         let doc = warned.output.map_err(|e| RenderError::Template {
             message: format_typst_as_lib_error(&e),
         })?;
 
         let pdf = typst_pdf::pdf(&doc, &self.options)
+            // PDF export of an already-compiled document only fails on options misuse
+            // (invalid standard combo); the options are fixed constants here, so this is
+            // not reachable from user input or template bugs.
             .map_err(|diags| RenderError::Pdf(format_diags(&diags)))?;
 
         Ok(RenderOutput {
@@ -207,5 +210,94 @@ fn format_typst_as_lib_error(e: &typst_as_lib::TypstAsLibError) -> String {
     match e {
         typst_as_lib::TypstAsLibError::TypstSource(diags) => format_diags(diags),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::Error;
+
+    fn broken_template_request() -> RenderRequest {
+        RenderRequest {
+            template: crate::templates::Template {
+                name: "test".into(),
+                description: String::new(),
+                main_source: "#assert(false, message: \"boom\")".into(),
+                extra_sources: vec![],
+            },
+            data_yaml: "cv: {}".into(),
+            user_font_dirs: vec![],
+        }
+    }
+
+    #[test]
+    fn template_compile_errors_are_labeled_and_formatted_with_hints() {
+        let error = render(&broken_template_request()).expect_err("broken template must fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("template error:"),
+            "labeled as a template error, got: {message}"
+        );
+        assert!(
+            message.contains("boom"),
+            "carries the diagnostic: {message}"
+        );
+    }
+
+    #[test]
+    fn template_error_label_reaches_the_cli_report() {
+        let error = render(&broken_template_request()).expect_err("broken template must fail");
+        let rendered = crate::error::report(&Error::Render(error), false);
+        assert!(
+            rendered.contains("Error: template error:"),
+            "got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn fit_params_convert_into_fit_data() {
+        let data = FitData::from(FitParams {
+            font_scale: 0.9,
+            spacing_scale: 0.8,
+            margin_scale: 1.0,
+        });
+        assert_eq!(data.font_scale, 0.9);
+        assert_eq!(data.spacing_scale, 0.8);
+        assert_eq!(data.margin_scale, 1.0);
+    }
+
+    #[test]
+    fn diagnostics_without_hints_format_to_the_bare_message() {
+        let diag = typst::diag::SourceDiagnostic::error(
+            typst::syntax::DiagSpan::detached(),
+            "unknown variable",
+        );
+        assert_eq!(format_diags(std::iter::once(&diag)), "unknown variable");
+    }
+
+    #[test]
+    fn diagnostics_with_hints_append_the_hint_list() {
+        let mut diag = typst::diag::SourceDiagnostic::error(
+            typst::syntax::DiagSpan::detached(),
+            "unknown variable",
+        );
+        diag.hints.push(typst::syntax::Spanned::detached(
+            "did you mean 'body'?".into(),
+        ));
+        assert_eq!(
+            format_diags(std::iter::once(&diag)),
+            "unknown variable (hints: did you mean 'body'?)"
+        );
+    }
+
+    #[test]
+    fn non_source_lib_errors_fall_back_to_display() {
+        let error = typst_as_lib::TypstAsLibError::Unspecified("missing main file".into());
+        assert_eq!(
+            format_typst_as_lib_error(&error),
+            "Unspecified: missing main file!",
+            "non-diagnostic errors render through their Display impl"
+        );
     }
 }

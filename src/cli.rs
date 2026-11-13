@@ -97,23 +97,22 @@ pub struct CheckArgs {
     pub file: PathBuf,
 }
 
-/// Dispatch a parsed CLI to its command handler.
-pub fn run(cli: Cli) -> Result<(), String> {
+/// Dispatch a parsed CLI to its command handler. Errors are returned typed; rendering
+/// happens in `main` (miette graphical output for input diagnostics, ADR-0018).
+pub fn run(cli: Cli) -> crate::error::Result<()> {
     if cli.verbose {
         eprintln!("cv: verbose mode on; font paths: {:?}", cli.font_path);
     }
 
-    let result: crate::error::Result<()> = match &cli.command {
+    match &cli.command {
         Command::Init(args) => commands::init::run(args),
         Command::Build(args) => commands::build::run(args, &cli),
         Command::Watch(_) => Err(unsupported(not_yet("watch"))),
-        Command::Check(_) => Err(unsupported(not_yet("check"))),
+        Command::Check(args) => commands::check::run(args, &cli.font_path),
         Command::Templates => Err(unsupported(not_yet("templates"))),
-        Command::Schema => Err(unsupported(not_yet("schema"))),
+        Command::Schema => commands::schema::run(),
         Command::Fonts => Err(unsupported(not_yet("fonts"))),
-    };
-
-    result.map_err(|e| crate::error::report(&e))
+    }
 }
 
 fn not_yet(name: &str) -> String {
