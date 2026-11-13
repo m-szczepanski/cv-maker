@@ -1,0 +1,119 @@
+//! Content model: everything under the `cv` key (spec §4).
+
+use serde::{Deserialize, Serialize};
+
+/// The CV content.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Cv {
+    /// Full name. Used for the document title/author metadata too (spec §9).
+    pub name: String,
+
+    /// Short role statement under the name.
+    #[serde(default)]
+    pub headline: Option<String>,
+
+    /// Where the person is based.
+    #[serde(default)]
+    pub location: Option<String>,
+
+    /// Email, phone, and links.
+    #[serde(default)]
+    pub contact: Option<Contact>,
+
+    /// Short professional summary paragraph.
+    #[serde(default)]
+    pub summary: Option<String>,
+
+    /// Ordered content sections. An empty list is valid.
+    #[serde(default)]
+    pub sections: Vec<Section>,
+}
+
+/// Contact details.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Contact {
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub links: Option<Vec<Link>>,
+}
+
+/// A labeled external link.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Link {
+    pub label: String,
+    pub url: String,
+}
+
+/// One content section: a title plus type-specific items (spec §4 content model).
+///
+/// Note: `deny_unknown_fields` is deliberately omitted here because it is incompatible
+/// with `#[serde(flatten)]` (the tag key `type` is consumed by [`SectionBody`]). Unknown
+/// keys are still rejected: the remaining map is forwarded to the tagged enum, whose
+/// variant structs carry `deny_unknown_fields`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Section {
+    pub title: String,
+    #[serde(flatten)]
+    pub body: SectionBody,
+}
+
+/// The closed set of section types for v1 (spec §4).
+///
+/// Modeled as an internally tagged enum keyed on the YAML `type` field so the schema shows
+/// exactly the four allowed values. Unknown keys inside a variant are rejected by the
+/// variant structs' `deny_unknown_fields`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SectionBody {
+    /// heading/org/location/dates/bullets items (experience, education).
+    Entries {
+        #[serde(default)]
+        items: Vec<EntryItem>,
+    },
+    /// key/value rows (skills).
+    KeyValues {
+        #[serde(default)]
+        items: Vec<KeyValueItem>,
+    },
+    /// Flat bullet list.
+    Bullets {
+        #[serde(default)]
+        items: Vec<String>,
+    },
+    /// Paragraph text. Each item is one paragraph.
+    Text {
+        #[serde(default)]
+        items: Vec<String>,
+    },
+}
+
+/// One `entries` item.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EntryItem {
+    /// Role or degree title.
+    pub heading: String,
+    #[serde(default)]
+    pub org: Option<String>,
+    #[serde(default)]
+    pub location: Option<String>,
+    /// Free-form string (spec §4: no locale-aware date handling).
+    #[serde(default)]
+    pub dates: Option<String>,
+    #[serde(default)]
+    pub bullets: Option<Vec<String>>,
+}
+
+/// One `key_values` item.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct KeyValueItem {
+    pub key: String,
+    pub value: String,
+}

@@ -30,7 +30,8 @@ The spec starts at M1, but the repo needs scaffolding first. Keep this small.
       Add `typst`, `typst-pdf`, `typst-kit` (and `typst-as-lib` only if it supports the pinned
       Typst version — verify, don't assume) **in M1 step 1.4**, not now, so the skeleton
       compiles without them.
-- [ ] 0.3 Set up CI to run the Gates on every push/PR (GitHub Actions: one job, stable toolchain).
+- [ ] 0.3 ~~Set up CI to run the Gates on every push/PR~~ — dropped (ADR-0013): no CI/CD
+      pipeline for now; run the Gates locally instead (see `AGENTS.md`).
 - [ ] 0.4 Write `src/main.rs` + `src/cli.rs` with all commands from spec §3 stubbed as `todo!`
       — except make `cv schema` and `cv templates` real enough to not lie (they can print
       "not implemented yet" and exit 1). Actually: prefer real stubs returning errors, so the
@@ -38,7 +39,7 @@ The spec starts at M1, but the repo needs scaffolding first. Keep this small.
 - [ ] 0.5 First commit passes Gates (trivially). Verify `cargo run -- --help` shows the full
       command surface.
 
-**Accept for M0:** CLI help output matches spec §3 command table; Gates run in CI.
+**Accept for M0:** CLI help output matches spec §3 command table; Gates pass locally.
 
 ---
 
@@ -258,7 +259,8 @@ Goal: README, exit codes, release binaries.
       (including the fit-overflow code decided in 4.3).
 - [ ] 6.2 Finalize `docs/decisions.md`: every §14 open question answered or explicitly
       deferred, each with a short rationale.
-- [ ] 6.3 Release CI: builds for Linux, macOS (x64 + arm64), Windows. Verify each artifact
+- [ ] 6.3 ~~Release CI~~ — adjusted (ADR-0013): release builds for Linux, macOS (x64 + arm64),
+      Windows are produced locally/manually. Verify each artifact
       runs on a clean machine (no Typst install, no fonts install needed — bundled assets
       must make the binary self-sufficient).
 - [ ] 6.4 Fresh-machine test: download a release binary, run the quick start end-to-end.

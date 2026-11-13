@@ -358,7 +358,7 @@ Complete in order. Each milestone ends with a working, tested, reviewable state.
 
 ### M1: Skeleton and first PDF
 
-- Cargo project, CI gates, `AGENTS.md`.
+- Cargo project, the Gates, `AGENTS.md`.
 - Model structs, YAML parsing, `cv init` writes a valid starter file.
 - One template (`compact`), `cv build` writes `cv.pdf` next to the YAML.
 - **Accept:** the flow `cv init`, `cv build` produces a one-page PDF with selectable text.
@@ -388,7 +388,7 @@ Complete in order. Each milestone ends with a working, tested, reviewable state.
 ### M6: Polish and release
 
 - README with a 60-second quick start, example outputs, documented exit codes.
-- Release builds for Linux, macOS, Windows via CI.
+- Release builds for Linux, macOS, Windows (produced locally; see decisions ADR-0013 — no CI).
 - **Accept:** a fresh machine can run the quick start using only the downloaded binary.
 
 ---
