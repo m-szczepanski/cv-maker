@@ -261,6 +261,77 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   (`jsonschema`) for a check strictly weaker than the typed parse — any document
   failing the schema fails `Document::from_yaml_str` too, since both share the model.
 
+## ADR-0021 — `cv fonts`: source column from three font books; names from metadata (plan 3.3)
+
+- **Context:** Plan 3.3 wants the available fonts listed "ideally marking source
+  (bundled / --font-path / system)". Typst's `FontBook` does not record where each
+  face came from once merged, and M2's `bundled_family_names` was a file-name
+  heuristic that would drift from the real metadata names (e.g. the variable Plex
+  build, where the static "SmBld" family-name split made file-name guesses wrong).
+- **Decision:** Build three minimal `TypstEngine` font books — user dirs only, bundled
+  only, and the full book (user + bundled + system via typst-kit; verified in the
+  pinned `typst-as-lib 0.17` source that system search only happens when
+  `search_fonts_with` is passed, so the two restricted books are exact). A family's
+  source label is its **winner** in ADR-0007 priority: font-path dirs → bundled →
+  system. Family names always come from the parsed font metadata (`FontBook::families`),
+  never from file names; the file-name heuristic is deleted. Output: one family per
+  line with a padded source column, grouped by source and sorted case-insensitively;
+  the listing counts as essential output, so `--quiet` keeps it (ADR-0012).
+- **Rationale:** Set-difference over books the renderer itself builds keeps listing,
+  validation and rendering on one ground truth; per-family classification by winner
+  matches what a build would actually load (a shadowed system font is not "available"
+  as itself).
+- **Consequences:** `available_font_families` (validation, plan 2.1) is now derived
+  from `available_fonts`, so the two cannot drift; a font book is built per source
+  on each `cv fonts`/`check`/`build` call — parsing the 19 embedded files twice costs
+  milliseconds and system discovery still runs once.
+
+## ADR-0022 — Font-path end-to-end fixture: renamed Inter clone "CvTest Sans" (plan 3.4)
+
+- **Context:** Plan 3.4 requires proof that a `--font-path`/`design.font_paths`
+  directory is *discoverable and selectable*. Every font file we already ship is also
+  in the bundle, so picking it proves nothing about user dirs; relying on some
+  machine-installed family would break the determinism rule (`.AGENTS.md` 18).
+- **Decision:** `tests/fixtures/fonts/CvTestSans-Regular.ttf` — the bundled
+  Inter-Regular with name-table IDs 1/2/3/4/6 rewritten to a unique family
+  "CvTest Sans" (OFL §Revision: the Reserved Font Name is dropped from all records,
+  the license ships next to the fixture as `CvTestSans-LICENSE.txt`). The tests show
+  that the family (a) fails validation without the directory, (b) validates, lists
+  under source `font-path`, builds and embeds into the PDF with `--font-path`, and
+  (c) resolves via `design.font_paths` relative to the YAML. Regenerate with
+  `fontTools` (dev-only, not a crate dependency):
+  `TTFont('fonts/Inter-Regular.ttf')` → `name.setName` for the exact-match strings
+  `Inter` / `Inter Regular` / `Inter-Regular` on IDs 1/2/4/6, plus the `Inter-Regular`
+  segment of the unique name (ID 3); the copyright notice (ID 0) stays untouched as
+  OFL requires → save.
+- **Rationale:** A uniquely-named, license-clean clone is the only way to assert
+  "resolved *because of* the user dir" deterministically; the negative test (a) rules
+  out the fixture family sneaking in via system fonts.
+- **Consequences:** ~400 KB test fixture in the repo; no production code paths depend
+  on it.
+
+## ADR-0023 — Manifest enforcement is a warning keyed on "written in the YAML" (plan 3.5)
+
+- **Context:** Spec §6: "A template must honor all `design` fields listed in its
+  `manifest.yaml`. Fields it ignores must be declared as unsupported so `cv check` can
+  warn." Ambiguities: severity, what counts as "using" a field, and grouping.
+- **Decision:** `cv check`/`cv build` emit a **warning** (never an error, ADR-0015) per
+  design *group* (`page`, `margins`, `fonts`, `sizes`, `spacing`, `colors`) that the
+  YAML writes but the template's manifest does not declare in `supported`. "Written"
+  means the span scan (ADR-0014) saw any scalar at or under `design.<group>` — so an
+  explicit value equal to the default still warns: the user authored it and expects an
+  effect. The warning labels the first written value in path order. Tool-level fields
+  (`template`, `fit_one_page`, `fit_floor`, `font_paths`) are exempt: the tool consumes
+  them, templates cannot ignore them. If the template name itself is invalid the
+  support check is skipped — the unknown-template error already covers it.
+- **Rationale:** Group granularity matches the manifest vocabulary; presence-of-write
+  is the only definition that needs no defaults comparison and works with spans we
+  already collect.
+- **Consequences:** No shipped built-in can trigger the warning today (`compact`
+  declares all six groups — asserted by a test), so the behavior is pinned by unit
+  tests against a declared-minimal template and becomes CLI-visible from M5 with custom
+  templates.
+
 ## Open questions (spec §14) — status
 
 Assigned to milestones per the implementation plan; each gets an ADR when resolved.

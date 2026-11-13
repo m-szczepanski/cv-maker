@@ -57,6 +57,11 @@
 
 #set par(leading: body-size * line-height - body-size, spacing: body-size * line-height * 0.9, justify: false)
 
+// Honor `design.fonts.mono`: Typst's `raw` element hardcodes DejaVu Sans Mono via a
+// built-in show-set rule; a user show-set rule overrides it (documented for 0.15,
+// verified by the mono byte-diff test in tests/design_fields.rs).
+#show raw: set text(font: design.fonts.mono)
+
 // Section heading: small, semibold, accent-colored.
 #let section-heading(title) = block(spacing: section-gap)[
   #text(size: heading-size, weight: "semibold", fill: accent, font: design.fonts.heading)[#upper(title)]

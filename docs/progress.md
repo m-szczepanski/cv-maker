@@ -5,8 +5,9 @@ this file only records what is done. Mark a task `[x]` only when it is implement
 the Gates pass (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
 `cargo test` — run locally, ADR-0013). Strikethrough tasks are dropped decisions.
 
-- **Current state:** M2 implemented — Gates green; M1 human visual check (1.7.4) and the
-  M1 review stop still pending, plus the M2 review stop.
+- **Current state:** M3 implemented — all tasks done, Gates green, 3.7 visual review
+  passed; M3 ready for review/merge. The M1 visual check (1.7.4) and the M1/M2 review
+  stops are still open.
 
 ## Milestone 0 — Project bootstrap ✅
 
@@ -67,15 +68,23 @@ Measured coverage (`cargo llvm-cov`, end of M2): 97.2% lines; every remaining un
 line is a defensive branch carrying an invariant comment (unreachable embedded assets,
 span-scan fallbacks, disk-failure paths), per `.AGENTS.md` rule 21.
 
-## Milestone 3 — Design block
+## Milestone 3 — Design block 🔜 review
 
-- [ ] 3.1 All design fields wired to the template
-- [ ] 3.2 Bundled fonts + `fonts/LICENSES.md`
-- [ ] 3.3 `cv fonts`
-- [ ] 3.4 `--font-path` end-to-end
-- [ ] 3.5 Manifest enforcement in `cv check`
-- [ ] 3.6 Per-field change tests
-- [ ] 3.7 Human visual review of design combos
+- [x] 3.1 All design fields wired to the template
+- [x] 3.2 Bundled fonts + `fonts/LICENSES.md`
+- [x] 3.3 `cv fonts`
+- [x] 3.4 `--font-path` end-to-end
+- [x] 3.5 Manifest enforcement in `cv check`
+- [x] 3.6 Per-field change tests
+- [x] 3.7 Human visual review of design combos — eight combos rendered (baseline,
+      letter, Source Sans 3, IBM Plex Sans variable, red accent, tight, large,
+      Plex Mono code spans) on 2026-11-13; human pass completed, approved.
+
+Measured coverage (`cargo llvm-cov`, end of M3): 97.4% lines; every remaining
+uncovered line is a defensive branch carrying an invariant comment (unreachable
+embedded assets, span-scan fallbacks, disk-failure paths), per `.AGENTS.md` rule 21.
+The `cv fonts` listing, manifest enforcement and the per-field tests are fully
+covered.
 
 ## Milestone 4 — One-page fit
 

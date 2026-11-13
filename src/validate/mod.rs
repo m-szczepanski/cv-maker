@@ -3,8 +3,8 @@
 //! The typed model parse (serde) already rejects unknown keys, wrong types and malformed
 //! lengths/colors — those surface as parse-time diagnostics. This module runs afterwards
 //! and checks *values*: schema version, template existence, font families, link URLs,
-//! duplicate section titles. All errors of all checks are collected, not just the first
-//! (spec §5).
+//! duplicate section titles, and design fields the chosen template declares unsupported
+//! (plan 3.5). All errors of all checks are collected, not just the first (spec §5).
 
 pub mod spans;
 
@@ -49,6 +49,18 @@ pub fn validate(
     check_fonts(&document.design, font_dirs, &spans, &source, &mut result);
     check_urls(&document.cv, &spans, &source, &mut result);
     check_duplicate_titles(&document.cv, &spans, &source, &mut result);
+    // Manifest enforcement needs the template's declaration; an unknown template has
+    // already been reported as an error by `check_template`, so a load failure here
+    // is not a second diagnostic.
+    if let Ok(template) = crate::templates::load_builtin(&document.design.template) {
+        check_manifest_support(
+            &template.name,
+            &template.supported_options,
+            &spans,
+            &source,
+            &mut result,
+        );
+    }
 
     result
 }
@@ -241,6 +253,41 @@ fn is_well_formed_url(url: &str) -> bool {
     !url.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
+/// Design groups a template can declare support for (spec §6 manifest `supported`).
+/// Tool-level fields (`template`, `fit_one_page`, `fit_floor`, `font_paths`) are not
+/// groups: the tool consumes them, so a template never ignores them.
+const DESIGN_GROUPS: [&str; 6] = ["page", "margins", "fonts", "sizes", "spacing", "colors"];
+
+/// Warn when the YAML writes values under a design group the template does not declare
+/// supported (plan 3.5): the render will silently ignore them (spec §6).
+///
+/// "Written" means present in the span scan, so an explicit value equal to the default
+/// still counts — the user authored it and expects an effect.
+fn check_manifest_support(
+    template_name: &str,
+    supported: &[String],
+    spans: &spans::SpanMap,
+    source: &miette::NamedSource<String>,
+    result: &mut ValidationResult,
+) {
+    for group in DESIGN_GROUPS {
+        if supported.iter().any(|declared| declared == group) {
+            continue;
+        }
+        let Some(span) = spans.first_used(&format!("design.{group}")) else {
+            continue;
+        };
+        let message = format!(
+            "template '{template_name}' does not support the design field '{group}'; its values are ignored"
+        );
+        let diag = Diag::error(message, "ignored by this template", span, source.clone());
+        result.warnings.push(Diag {
+            severity: Severity::Warning,
+            ..diag
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,5 +316,72 @@ mod tests {
     fn rejects_urls_with_spaces_or_control_characters() {
         assert!(!is_well_formed_url("https://exa mple.dev"));
         assert!(!is_well_formed_url("https://example.dev/\n"));
+    }
+
+    fn support_warnings(yaml: &str, supported: &[&str]) -> Vec<Diag> {
+        let spans = spans::scalar_spans(yaml);
+        let source = miette::NamedSource::new("cv.yaml", yaml.to_owned());
+        let supported: Vec<String> = supported.iter().map(|s| (*s).to_owned()).collect();
+        let mut result = ValidationResult::default();
+        check_manifest_support("plain", &supported, &spans, &source, &mut result);
+        result.warnings
+    }
+
+    #[test]
+    fn warns_for_written_but_unsupported_design_groups() {
+        let yaml = "design:\n  page: letter\n  colors:\n    accent: \"#ff0000\"\n";
+        let warnings = support_warnings(yaml, &["page"]);
+        let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            ["template 'plain' does not support the design field 'colors'; its values are ignored"],
+            "only the used, undeclared group warns"
+        );
+        assert_eq!(warnings[0].severity, Severity::Warning, "never an error");
+    }
+
+    #[test]
+    fn warning_labels_the_first_value_written_under_the_ignored_group() {
+        let yaml = "design:\n  colors:\n    accent: \"#ff0000\"\n";
+        let warning = &support_warnings(yaml, &[])[0];
+        let label = warning.labels.first().expect("span-labeled");
+        let start = label.offset();
+        assert_eq!(
+            &yaml[start..start + label.len()],
+            "\"#ff0000\"",
+            "points at the ignored value, not the group key"
+        );
+    }
+
+    #[test]
+    fn no_warnings_when_every_used_group_is_supported() {
+        let yaml = "design:\n  page: letter\n  margins: { x: 2cm, y: 2cm }\n";
+        assert!(
+            support_warnings(
+                yaml,
+                &["page", "margins", "fonts", "sizes", "spacing", "colors"]
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn unsupported_but_unwritten_groups_stay_silent() {
+        let yaml = "schema: 1\ncv:\n  name: X\n";
+        assert!(support_warnings(yaml, &["page"]).is_empty());
+    }
+
+    #[test]
+    fn compact_template_ships_full_design_support() {
+        // The shipped built-in declares every group, so no built-in CV can warn (the
+        // warning itself is exercised against a declared-minimal template above).
+        let template = crate::templates::load_builtin("compact").expect("compact loads");
+        for group in DESIGN_GROUPS {
+            assert!(
+                template.supported_options.iter().any(|s| s == group),
+                "compact manifest must declare {group}: {:?}",
+                template.supported_options
+            );
+        }
     }
 }
