@@ -30,7 +30,10 @@
 
 #let section-gap = to-length(design.spacing.section_gap) * fit.spacing_scale
 #let entry-gap = to-length(design.spacing.entry_gap) * fit.spacing_scale
-#let line-height = design.spacing.line_height
+// Line-height tightening (ADR-0024): only the leading *above* 1.0 is scaled by
+// the fit loop, so a tight fit can never pull line height below 1.0 and overlap
+// lines.
+#let line-height = 1 + (design.spacing.line_height - 1) * fit.spacing_scale
 
 #let accent = rgb(design.colors.accent)
 #let text-color = rgb(design.colors.text)

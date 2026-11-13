@@ -88,7 +88,7 @@ covered.
 
 ## Milestone 4 — One-page fit
 
-- [ ] 4.1 Fit loop (Phase A spacing → Phase B font scale; binary search)
+- [x] 4.1 Fit loop (Phase A spacing → Phase B font scale; binary search)
 - [ ] 4.2 Hard guarantees (max iterations, floor, determinism, least-aggressive)
 - [ ] 4.3 Overflow-at-floor behavior + §14 exit-code decision (ADR)
 - [ ] 4.4 `--no-fit`
