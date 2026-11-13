@@ -133,11 +133,38 @@ mod tests {
     #[test]
     fn bundled_family_names_includes_the_bundled_set() {
         let names = bundled_family_names();
-        assert!(names.contains(&"Inter".to_owned()), "got: {names:?}");
-        assert!(
-            names.contains(&"JetBrains Mono".to_owned()),
-            "camel-case names are split: {names:?}"
-        );
+        // The five families of spec §2.
+        for expected in [
+            "Inter",
+            "JetBrains Mono",
+            "IBM Plex Sans",
+            "IBM Plex Mono",
+            "Source Sans 3",
+        ] {
+            assert!(
+                names.iter().any(|n| n == expected),
+                "bundled set must cover {expected}, got: {names:?}"
+            );
+        }
+    }
+
+    /// The real gate: every spec §2 family must resolve *from the embedded font files'
+    /// metadata* (the same path a build takes), not just from their file names.
+    #[test]
+    fn font_book_resolves_every_bundled_family() {
+        let families = available_font_families(&[]).expect("font book builds");
+        for expected in [
+            "Inter",
+            "JetBrains Mono",
+            "IBM Plex Sans",
+            "IBM Plex Mono",
+            "Source Sans 3",
+        ] {
+            assert!(
+                families.iter().any(|f| f == expected),
+                "font book must resolve {expected}, got: {families:?}"
+            );
+        }
     }
 
     #[test]

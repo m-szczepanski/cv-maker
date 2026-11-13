@@ -70,7 +70,7 @@ span-scan fallbacks, disk-failure paths), per `.AGENTS.md` rule 21.
 ## Milestone 3 — Design block
 
 - [x] 3.1 All design fields wired to the template
-- [ ] 3.2 Bundled fonts + `fonts/LICENSES.md`
+- [x] 3.2 Bundled fonts + `fonts/LICENSES.md`
 - [ ] 3.3 `cv fonts`
 - [ ] 3.4 `--font-path` end-to-end
 - [ ] 3.5 Manifest enforcement in `cv check`
