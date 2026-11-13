@@ -147,6 +147,8 @@ pub fn load_builtin(name: &str) -> Result<Template> {
 
     let mut extra_sources = Vec::new();
     for (path, contents) in &files {
+        // Invariant: `embedded_template_files` retained only paths under this exact
+        // prefix, so the strip always succeeds.
         let virtual_path = path.strip_prefix(&prefix).expect("path starts with prefix");
         if virtual_path == "template.typ" {
             continue;
@@ -164,8 +166,9 @@ pub fn load_builtin(name: &str) -> Result<Template> {
         ))
     })?;
     let manifest = manifest::Manifest::from_yaml_str(&utf8(manifest_bytes, "manifest.yaml")?)?;
-    // Shipped manifests are usable (pinned by `every_builtin_manifest_is_usable_and_
-    // complete`), so this branch cannot reach a user.
+    // Shipped manifests are usable — the built-in parity tests in this module pin
+    // every embedded manifest through `check_usable`, so this branch cannot reach
+    // a user.
     manifest.check_usable().map_err(|problem| {
         Error::Internal(format!(
             "built-in template '{name}' is not usable: {problem}"

@@ -79,7 +79,7 @@
 // `if` (bare `if` lines inside markup brackets are literal text).
 #let entry(item) = {
   let second-line = ()
-  if item.org != none { second-line.push(text(weight: "medium", item.org)) }
+  if item.org != none { second-line.push(text(weight: "semibold", item.org)) }
   if item.location != none {
     if item.org != none { second-line.push(text(fill: muted, " — ")) }
     second-line.push(text(fill: muted, item.location))
