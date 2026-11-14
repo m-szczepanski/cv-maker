@@ -37,6 +37,7 @@ expression: schema
           "y": "1.2cm"
         },
         "page": "a4",
+        "pages": 1,
         "sizes": {
           "body": "9.5pt",
           "heading": "11pt",
@@ -230,6 +231,13 @@ expression: schema
           "description": "Page size.",
           "$ref": "#/$defs/Page",
           "default": "a4"
+        },
+        "pages": {
+          "description": "Page count the build targets; the fit loop fills up to this many pages.\n`NonZeroU32` makes `pages: 0` a parse error at the line.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 1,
+          "minimum": 1
         },
         "sizes": {
           "$ref": "#/$defs/Sizes",

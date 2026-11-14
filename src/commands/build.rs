@@ -56,7 +56,7 @@ pub fn run(args: &BuildArgs, cli: &Cli) -> Result<()> {
         // Spec §7 step 4 + ADR-0026: the PDF was written; this warning is an
         // essential, so it also prints under `--quiet` (ADR-0012), and the exit
         // code stays 0 — overflow is a result, not an error.
-        super::report_overflow(&output);
+        super::report_overflow(&output, config.target_pages);
     }
 
     if !cli.quiet {

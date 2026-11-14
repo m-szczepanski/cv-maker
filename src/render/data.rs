@@ -142,6 +142,8 @@ pub struct DesignData<'a> {
     pub template: String,
     /// `"a4"` or `"letter"`.
     pub page: String,
+    /// The page count the build targets (the fit loop fills up to this many pages).
+    pub pages: u32,
     pub margins: MarginsData,
     pub fonts: FontsData<'a>,
     pub sizes: SizesData,
@@ -157,6 +159,7 @@ impl<'a> From<&'a Design> for DesignData<'a> {
         Self {
             template: d.template.clone(),
             page: page_name(d.page),
+            pages: d.pages.get(),
             margins: MarginsData {
                 x: d.margins.x.to_data(),
                 y: d.margins.y.to_data(),
@@ -344,6 +347,14 @@ mod tests {
             .expect("fixture parses");
         let yaml = to_yaml(&doc.cv, &doc.design);
         assert!(yaml.contains("page: letter"), "got:\n{yaml}");
+    }
+
+    #[test]
+    fn pages_serializes_into_data_yaml() {
+        let doc = Document::parse_yaml("schema: 1\ncv:\n  name: X\ndesign:\n  pages: 2\n")
+            .expect("fixture parses");
+        let yaml = to_yaml(&doc.cv, &doc.design);
+        assert!(yaml.contains("pages: 2"), "got:\n{yaml}");
     }
 
     /// The set of fields the tool parses into inline-Markdown tokens is a contract:

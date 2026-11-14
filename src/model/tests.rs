@@ -82,6 +82,27 @@ fn partial_design_fills_missing_fields_with_defaults() -> Result<()> {
 }
 
 #[test]
+fn pages_defaults_to_one_and_parses_a_larger_target() -> Result<()> {
+    let doc = Document::from_yaml_str("schema: 1\ncv:\n  name: Jane Doe\n")?;
+    assert_eq!(doc.design.pages.get(), 1, "default is a one-page CV");
+
+    let doc = Document::from_yaml_str("schema: 1\ncv:\n  name: Jane Doe\ndesign:\n  pages: 2\n")?;
+    assert_eq!(doc.design.pages.get(), 2);
+    Ok(())
+}
+
+#[test]
+fn pages_zero_is_rejected() {
+    let yaml = "schema: 1\ncv:\n  name: Jane Doe\ndesign:\n  pages: 0\n";
+    let err = Document::from_yaml_str(yaml).expect_err("zero pages must fail");
+    let msg = err.to_string().to_lowercase();
+    assert!(
+        msg.contains("pages") && (msg.contains("nonzero") || msg.contains("zero")),
+        "the error must name pages and the zero problem, got: {err}"
+    );
+}
+
+#[test]
 fn unknown_top_level_key_is_rejected() {
     let yaml = "schema: 1\ncv:\n  name: Jane Doe\nsurprise: true\n";
     let err = Document::from_yaml_str(yaml).expect_err("unknown key must fail");

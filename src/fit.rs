@@ -1,9 +1,10 @@
-//! One-page fitting loop (spec §7, plan 4.1–4.2; search shape in ADR-0024).
+//! Fitting loop to the target page count (spec §7, plan 4.1–4.2; search shape in
+//! ADR-0024).
 //!
 //! Strategy, in spec order:
 //!
-//! 1. Compile as-is. If it fits (one page), **never shrink** — the identity compile
-//!    doubles as the "t = 0 is infeasible" knowledge for the search.
+//! 1. Compile as-is. If it fits (within `design.pages` pages), **never shrink** — the
+//!    identity compile doubles as the "t = 0 is infeasible" knowledge for the search.
 //! 2. Phase A — tighten `spacing.*` and margins together along one linear "tightness"
 //!    `t`, floors: spacing scale 0.6, margins never below 1.0 cm.
 //! 3. Phase B — only if A's floors still overflow: shrink `font_scale` toward its
@@ -41,6 +42,8 @@ pub const MAX_PHASE_PROBES: usize = 5;
 pub struct FitConfig {
     /// Run the loop at all (`design.fit_one_page`, overridable by `--no-fit`).
     pub enabled: bool,
+    /// Page count the document must fit within (`design.pages`).
+    pub target_pages: usize,
     /// Smallest `margin_scale` Phase A may use, so margins stay ≥ 1.0 cm.
     pub margin_min_scale: f64,
     /// Smallest `font_scale` Phase B may use.
@@ -52,6 +55,7 @@ impl FitConfig {
     pub fn from_design(design: &Design) -> Self {
         Self {
             enabled: design.fit_one_page,
+            target_pages: design.pages.get() as usize,
             margin_min_scale: margin_min_scale(&design.margins),
             font_floor: font_floor_scale(design),
         }
@@ -102,7 +106,8 @@ fn font_floor_scale(design: &Design) -> f64 {
 /// Run the fitting loop against a prepared engine (fonts and sources stay loaded;
 /// plan 1.4.4). With `config.enabled == false` this is exactly one identity compile.
 pub fn fit(engine: &Engine, config: &FitConfig) -> std::result::Result<FitOutcome, RenderError> {
-    Session::new(config, |params| engine.compile(params)).run()
+    let target_pages = config.target_pages;
+    Session::new(config, |params| engine.compile(params, target_pages)).run()
 }
 
 /// Scale triple for a tightness `t` and font `font_scale` (ADR-0024): at `t = 0`
@@ -114,11 +119,6 @@ fn scales_at(margin_min_scale: f64, font_scale: f64, t: f64) -> FitParams {
         spacing_scale: 1.0 - t * (1.0 - SPACING_FLOOR),
         margin_scale: 1.0 - t * (1.0 - margin_min_scale),
     }
-}
-
-fn fits(output: &RenderOutput) -> bool {
-    // A paged document always has ≥ 1 page; `<= 1` only guards the impossible 0.
-    output.page_count <= 1
 }
 
 struct Session<'a> {
@@ -139,6 +139,13 @@ impl<'a> Session<'a> {
         }
     }
 
+    /// Does this compile stay within the target page count?
+    fn fits(&self, output: &RenderOutput) -> bool {
+        // A paged document always has ≥ 1 page; the comparison only also guards
+        // the impossible 0 against a target of 1.
+        output.page_count <= self.config.target_pages
+    }
+
     /// One compile at the mapped scales, counted for telemetry.
     fn call(&mut self, font_scale: f64, t: f64) -> std::result::Result<RenderOutput, RenderError> {
         self.compiles += 1;
@@ -152,7 +159,7 @@ impl<'a> Session<'a> {
         t: f64,
     ) -> std::result::Result<(bool, RenderOutput), RenderError> {
         let output = self.call(font_scale, t)?;
-        Ok((fits(&output), output))
+        Ok((self.fits(&output), output))
     }
 
     fn outcome(&self, output: RenderOutput, applied: FitParams, overflowed: bool) -> FitOutcome {
@@ -166,7 +173,7 @@ impl<'a> Session<'a> {
 
     fn run(&mut self) -> std::result::Result<FitOutcome, RenderError> {
         let identity = self.call(1.0, 0.0)?;
-        if !self.config.enabled || fits(&identity) {
+        if !self.config.enabled || self.fits(&identity) {
             // Hard requirement (spec §7): never shrink what already fits.
             return Ok(self.outcome(identity, FitParams::default(), false));
         }
@@ -368,6 +375,43 @@ mod tests {
     // ---- loop guarantees (plan 4.2) ----
 
     #[test]
+    fn a_two_page_target_never_shrinks_a_document_that_fits_two_pages() {
+        // The fake always produces 2 pages; with `pages: 2` that is a first fit.
+        let probes = Rc::new(RefCell::new(Vec::new()));
+        let config = FitConfig {
+            target_pages: 2,
+            ..default_config(true)
+        };
+        let outcome = fake_session(&config, |_| false, probes.clone())
+            .run()
+            .expect("fake compile never fails");
+        assert_eq!(outcome.compiles, 1, "a single identity compile (spec §7)");
+        assert_eq!(outcome.applied, FitParams::default(), "scale 1.00");
+        assert!(!outcome.overflowed);
+    }
+
+    #[test]
+    fn a_two_page_target_still_tightens_content_beyond_two_pages() {
+        // Fits (2 pages) only once spacing is tightened enough; otherwise 3 pages.
+        let config = FitConfig {
+            target_pages: 2,
+            ..default_config(true)
+        };
+        let outcome = Session::new(&config, |params| {
+            Ok(output(if params.spacing_scale <= 0.7 { 2 } else { 3 }))
+        })
+        .run()
+        .expect("fake compile never fails");
+        assert!(
+            outcome.applied.spacing_scale <= 0.7,
+            "the returned setting fits within 2 pages: {:?}",
+            outcome.applied
+        );
+        assert_eq!(outcome.compiles, 1 + MAX_PHASE_PROBES);
+        assert!(!outcome.overflowed);
+    }
+
+    #[test]
     fn never_shrinks_a_document_that_fits_first_try() {
         let probes = Rc::new(RefCell::new(Vec::new()));
         let config = default_config(true);
@@ -501,6 +545,7 @@ mod tests {
         let probes = Rc::new(RefCell::new(Vec::new()));
         let config = FitConfig {
             enabled: true,
+            target_pages: 1,
             margin_min_scale: 0.8,
             font_floor: 1.0,
         };
@@ -608,6 +653,7 @@ mod tests {
     fn never_shrinkable() -> FitConfig {
         FitConfig {
             enabled: true,
+            target_pages: 1,
             margin_min_scale: 0.8,
             font_floor: 0.5,
         }
@@ -759,6 +805,7 @@ mod tests {
     fn tight_config() -> FitConfig {
         FitConfig {
             enabled: true,
+            target_pages: 1,
             margin_min_scale: 0.8,
             font_floor: 0.5,
         }

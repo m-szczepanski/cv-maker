@@ -116,11 +116,12 @@ pub fn report_warnings(warnings: &[Diag]) {
 
 /// The fit-overflow warning at the floor (spec §7 step 4, ADR-0026): plain text —
 /// the cause is content volume, not one YAML value, so there is no span to label.
-pub fn report_overflow(output: &crate::render::RenderOutput) {
+/// The spill is measured against the target page count (`design.pages`).
+pub fn report_overflow(output: &crate::render::RenderOutput, target_pages: usize) {
     let message = format!(
-        "content still overflows at the fit floor: about {} lines spill onto {} extra page(s); cut content (e.g. bullets or paragraphs) or relax design.fit_floor / margins",
+        "content still overflows at the fit floor: about {} lines spill onto {} extra page(s); cut content (e.g. bullets or paragraphs), raise design.pages, or relax design.fit_floor / margins",
         output.overflow_lines,
-        output.page_count.saturating_sub(1),
+        output.page_count.saturating_sub(target_pages),
     );
     let is_tty = std::io::stderr().is_terminal();
     err_text(&crate::error::render_diag(

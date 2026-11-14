@@ -42,6 +42,24 @@ fn cv_yaml(entries: usize, bullets_per_entry: usize) -> String {
     )
 }
 
+/// A CV with one section per element of `entries_per_section`: a template section
+/// is one unbreakable block, so separate sections paginate as honest whole-page
+/// flows — the multi-page shape the `design.pages` tests need.
+fn sections_yaml(entries_per_section: &[usize]) -> String {
+    let mut body = String::new();
+    for (s, per) in entries_per_section.iter().enumerate() {
+        body.push_str(&format!(
+            "  - title: Section {s}\n    type: entries\n    items:\n"
+        ));
+        for i in 0..*per {
+            body.push_str(&format!(
+                "      - heading: Role {s}.{i}\n        org: Org {s}.{i}\n        bullets:\n          - Achievement number {s}.{i} with realistic wording\n"
+            ));
+        }
+    }
+    format!("schema: 1\ncv:\n  name: Jane Doe\n  sections:\n{body}\n")
+}
+
 /// Plan 4.5: an overflowing CV fits after the loop shrinks, and the applied scale
 /// is below 1.0 in the success line.
 #[test]
@@ -263,6 +281,85 @@ fn impossible_content_still_builds_with_a_warning_and_exit_zero() {
 
     let pages = pdf_extract::extract_text_by_pages(dir.join("cv.pdf")).expect("text");
     assert!(pages.len() > 1, "the overflowed PDF is still written");
+}
+
+/// `design.pages: 2` raises the target: content that naturally flows onto a
+/// second page is a first fit — no shrinking, no warning, and the PDF keeps
+/// both pages.
+#[test]
+fn two_page_target_does_not_shrink_content_that_fits_two_pages() {
+    let dir = unique_dir("fit-two-pages");
+    let yaml = sections_yaml(&[10, 10]) + "\ndesign:\n  pages: 2\n";
+    fs::write(dir.join("cv.yaml"), yaml).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
+    assert!(ok, "got: {out}");
+    assert!(
+        out.contains("2 pages") && out.contains("fit: scale 1.00"),
+        "a CV within its 2-page target must not be shrunk, got: {out}"
+    );
+    assert!(!out.contains("content still overflows"), "got: {out}");
+    let pages = pdf_extract::extract_text_by_pages(dir.join("cv.pdf")).expect("text");
+    assert_eq!(pages.len(), 2, "got: {out}");
+}
+
+/// The overflow warning measures the spill against the target: with `pages: 2`,
+/// the "extra pages" figure is the PDF's page count minus two, and the warning
+/// suggests raising `design.pages` (the new escape hatch).
+#[test]
+fn overflow_warning_counts_pages_past_the_target() {
+    let dir = unique_dir("fit-overflow-two-pages");
+    let yaml = sections_yaml(&[10, 10, 10, 10]) + "\ndesign:\n  pages: 2\n";
+    fs::write(dir.join("cv.yaml"), yaml).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["--verbose", "build", "--output", "cv.pdf"]);
+    assert!(
+        ok,
+        "overflow must not fail the build (ADR-0026), got: {out}"
+    );
+    assert!(
+        out.contains("content still overflows at the fit floor"),
+        "the warning must be printed, got: {out}"
+    );
+    assert!(
+        out.contains("raise design.pages"),
+        "the warning must suggest raising design.pages, got: {out}"
+    );
+
+    let reported = reported_extra_pages(&out);
+    let pages = pdf_extract::extract_text_by_pages(dir.join("cv.pdf")).expect("text");
+    assert_eq!(
+        pages.len(),
+        2 + reported,
+        "the warning's figure must be the PDF's pages minus the target, got: {out}"
+    );
+}
+
+/// The number in "… spill onto N extra page(s)" of the fit-overflow warning.
+fn reported_extra_pages(out: &str) -> usize {
+    let start = out
+        .find("spill onto ")
+        .unwrap_or_else(|| panic!("no spill figure in: {out}"));
+    let digits: String = out[start + "spill onto ".len()..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().expect("the spill figure is a number")
+}
+
+/// `pages: 0` is not a document: a parse error that names the field.
+#[test]
+fn pages_zero_is_rejected_with_the_field_named() {
+    let dir = unique_dir("fit-pages-zero");
+    let yaml = cv_yaml(4, 1) + "\ndesign:\n  pages: 0\n";
+    fs::write(dir.join("cv.yaml"), yaml).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["check"]);
+    assert!(!ok, "zero pages must fail the check, got: {out}");
+    assert!(
+        out.contains("design.pages"),
+        "the error must name design.pages, got: {out}"
+    );
 }
 
 /// The overflow warning is an essential (ADR-0026/0012): `--quiet` drops the
