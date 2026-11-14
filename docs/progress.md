@@ -246,6 +246,17 @@ unit-tested in `src/commands/watch.rs` (see its coverage note).
         skip — it is checked against `scripts/release-targets`, which both release scripts
         read. Verified: a corrupt host artifact exits 1, an unclassifiable name exits 1, a
         foreign triple skips, and `build-release.sh` rejects an unknown target.
+      - A robustness pass over those two fixes found four more weak spots in the new code
+        itself (ADR-0037): the triple match was still a regex built from a file name, so
+        `cv-1-aarch64.*darwin.tar.xz` impersonated `aarch64-apple-darwin` and would have
+        been skipped as "another architecture" — fixed-string matching now; the build
+        script's target argument had the same pattern-from-user-input shape; an empty
+        artifact glob aborted the checksum step (or hashed an empty stream) after the
+        checksum file was deleted; and `shasum` made the Linux claim depend on perl.
+        Verified with a battery of eight probes: host artifact runs, foreign triples skip,
+        crafted name refused, tampered archive mismatch-refused, not-listed name refused,
+        metachar target arguments refused, one-target rebuild reproduces the committed
+        checksums byte for byte, and `shasum -a 256 -c` works as the README says.
       - **Release archives were not reproducible**: rebuilding the same commit hashed
         differently although the binary inside was byte-identical (member order, mtimes,
         uid). Members are now sorted with pinned timestamps and two full matrix builds

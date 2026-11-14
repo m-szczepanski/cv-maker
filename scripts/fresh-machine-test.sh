@@ -38,7 +38,11 @@ if [ ! -f "$ARCHIVE" ]; then
 fi
 # Only a triple from the release matrix counts as "another target"; anything else is a
 # file this script cannot classify, and must not be reported as an accepted skip.
-if ! grep -qs "^$TRIPLE$" scripts/release-targets; then
+# -F -x: the triple came out of a file name, and as a *regex* a crafted name like
+# `cv-1-aarch64.*darwin.tar.xz` matches the real triple `aarch64-apple-darwin` — the
+# harness would then skip a file it cannot run as "another architecture", exactly the
+# silent accept this check exists to prevent. -x pins the match to a whole line.
+if ! grep -qxs -F "$TRIPLE" scripts/release-targets; then
   echo "not a release artifact name: $NAME" >&2
   echo "expected cv-<version>-<triple>.tar.xz with a triple from scripts/release-targets" >&2
   exit 1
@@ -46,10 +50,14 @@ fi
 echo "==> artifact: $ARCHIVE (target $TRIPLE)"
 
 SUMS="$(dirname "$ARCHIVE")/SHA256SUMS.txt"
+# `sha256sum` is the standard Linux spelling, `shasum -a 256` the macOS one; both print
+# "<hash>  <name>", so SHA256SUMS.txt verifies with either tool.
+HASH_CMD=(sha256sum)
+command -v sha256sum >/dev/null 2>&1 || HASH_CMD=(shasum -a 256)
 [ -f "$SUMS" ] || { echo "no checksum file at $SUMS" >&2; exit 1; }
 EXPECTED="$(awk -v f="$NAME" '$2 == f {print $1; exit}' "$SUMS")"
 [ -n "$EXPECTED" ] || { echo "$NAME is not listed in $SUMS" >&2; exit 1; }
-ACTUAL="$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')"
+ACTUAL="$("${HASH_CMD[@]}" "$ARCHIVE" | awk '{print $1}')"
 [ "$EXPECTED" = "$ACTUAL" ] || { echo "checksum mismatch: $ACTUAL != $EXPECTED" >&2; exit 1; }
 echo "    sha256 ok: $ACTUAL"
 

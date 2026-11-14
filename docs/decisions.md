@@ -677,6 +677,20 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   architecture" too. Now a host-triple artifact that will not run is a hard failure, an
   unclassifiable name is refused, and `.zip` archives are unpacked with `unzip` so the
   script works on Linux as well.
+- **Hardening round over those fixes** (found by re-reading the new code as an attacker
+  would): the triple was still matched as a *regex* built from the file name, and
+  `cv-1-aarch64.*darwin.tar.xz` matches the real triple `aarch64-apple-darwin` — the
+  silent skip again, one name away. It is a fixed-string whole-line match now
+  (`grep -qxs -F`); the first fix attempt even forgot the `-F`, which the probe battery
+  caught because the crafted file only failed later on its truncated bytes. The
+  `build-release.sh` target argument is compared as an exact string for the same reason
+  (a case pattern built from user input treats glob metacharacters as part of the
+  matrix), the checksum step fails loudly when no artifact was built (before: an
+  errexit abort or a hash of an empty stream, after the checksum file was already
+  deleted), and both scripts fall back from `shasum` to `sha256sum`, which makes the
+  Linux claim above true on machines without perl's `shasum`. The checksum block also
+  carried dead code from its first draft (`sed` normalizing `./` names it no longer
+  produced) — deleted.
 
 ## ADR-0038 — tagged PDF 1.7, no PDF/A or PDF/UA validator (§14 closed)
 

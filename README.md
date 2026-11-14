@@ -44,7 +44,8 @@ nothing else needs to be installed.
 | Windows x86-64 | `cv-<version>-x86_64-pc-windows-gnu.zip` |
 
 Each release carries a `SHA256SUMS.txt`; from inside the download directory,
-`shasum -a 256 -c SHA256SUMS.txt` confirms the archive you have is the one that was built. On macOS, a binary you downloaded but
+`shasum -a 256 -c SHA256SUMS.txt` confirms the archive you have is the one that was
+built (`sha256sum -c SHA256SUMS.txt` on Linux). On macOS, a binary you downloaded but
 did not build is quarantined: allow it with right-click → Open the first time.
 
 Or build it yourself from a checkout (needs a Rust toolchain, see `rust-toolchain.toml`):

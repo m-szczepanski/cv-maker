@@ -29,11 +29,17 @@ done < "scripts/release-targets"
 
 TARGETS=("${ALL_TARGETS[@]}")
 if [ $# -ge 1 ]; then
-  case " ${ALL_TARGETS[*]} " in
-    *" $1 "*) TARGETS=("$1") ;;
-    *) echo "unknown target '$1' (scripts/release-targets lists: ${ALL_TARGETS[*]})" >&2
-       exit 1 ;;
-  esac
+  # Exact string comparison: the argument is user data, and a case pattern built from it
+  # would treat a glob metacharacter as part of the matrix.
+  known=""
+  for listed in "${ALL_TARGETS[@]}"; do
+    if [ "$listed" = "$1" ]; then known=1; fi
+  done
+  if [ -z "$known" ]; then
+    echo "unknown target '$1' (scripts/release-targets lists: ${ALL_TARGETS[*]})" >&2
+    exit 1
+  fi
+  TARGETS=("$1")
 fi
 
 build_one() {
@@ -71,12 +77,17 @@ for target in "${TARGETS[@]}"; do
 done
 
 echo "==> checksums"
-# Bare file names, sorted, files only: a leftover staging directory from an interrupted
-# build must not end up in the list `shasum -c` is checked against.
+# Same tool portability as the fresh-machine test; both spellings print "<hash>  <name>".
+HASH_CMD=(sha256sum)
+command -v sha256sum >/dev/null 2>&1 || HASH_CMD=(shasum -a 256)
 (cd "$DIST" && rm -f SHA256SUMS.txt
-  for artifact in "cv-$VERSION"-*; do
-    [ -f "$artifact" ] && printf '%s\n' "$artifact"
-  done | LC_ALL=C sort | xargs shasum -a 256 > SHA256SUMS.txt
-  # Bare names, not "./name": the file is read from wherever the user unpacked it.
-  sed -i.bak 's|^\./||' SHA256SUMS.txt && rm -f SHA256SUMS.txt.bak)
+  # nullglob, so "nothing was built" is an empty list we fail on loudly — without it an
+  # unmatched glob aborts via errexit (or hashes an empty stream) right after the
+  # checksum file has been deleted.
+  shopt -s nullglob
+  artifacts=("cv-$VERSION"-*)
+  [ "${#artifacts[@]}" -gt 0 ] ||
+    { echo "no cv-$VERSION artifacts in dist/ to checksum" >&2; exit 1; }
+  printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort | xargs "${HASH_CMD[@]}" > SHA256SUMS.txt)
 ls -la "$DIST"
+echo "next: scripts/fresh-machine-test.sh verifies an archive the way a fresh machine would"
