@@ -45,6 +45,54 @@ impl Cv {
             })
             .unwrap_or_default()
     }
+
+    /// Every text that carries the inline Markdown subset (ADR-0016): the summary, the
+    /// bullets of `entries` items, and the items of `bullets` and `text` sections —
+    /// each with the path the span scan addresses it by, so a problem found in the
+    /// parsed tokens can be labeled in the source.
+    pub fn markdown_texts(&self) -> Vec<MarkdownText<'_>> {
+        let mut fields = Vec::new();
+        if let Some(summary) = &self.summary {
+            fields.push(MarkdownText {
+                span_path: "cv.summary".to_owned(),
+                text: summary,
+            });
+        }
+        for (section, item) in self.sections.iter().enumerate() {
+            match &item.body {
+                SectionBody::Entries { items } => {
+                    for (index, entry) in items.iter().enumerate() {
+                        for (bullet, text) in entry.bullets.iter().flatten().enumerate() {
+                            fields.push(MarkdownText {
+                                span_path: format!(
+                                    "cv.sections[{section}].items[{index}].bullets[{bullet}]"
+                                ),
+                                text,
+                            });
+                        }
+                    }
+                }
+                SectionBody::Bullets { items } | SectionBody::Text { items } => {
+                    for (index, text) in items.iter().enumerate() {
+                        fields.push(MarkdownText {
+                            span_path: format!("cv.sections[{section}].items[{index}]"),
+                            text,
+                        });
+                    }
+                }
+                SectionBody::KeyValues { .. } => {}
+            }
+        }
+        fields
+    }
+}
+
+/// One Markdown-enabled text field and where it lives in the source (see
+/// [`Cv::markdown_texts`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkdownText<'a> {
+    pub span_path: String,
+    pub text: &'a str,
 }
 
 /// Contact details.

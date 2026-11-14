@@ -1,14 +1,14 @@
 //! Data model (spec §4): content (`cv`) and design blocks as serde structs.
 //!
 //! Every struct uses `deny_unknown_fields` so user mistakes surface as errors instead of
-//! being silently ignored. All JSON Schema derives land here too (plan 1.1.4), even though
-//! `cv schema` is only exposed in M2.
+//! being silently ignored. The JSON Schema `cv schema` prints is derived from these
+//! same structs, never written by hand (spec §2).
 
 pub mod content;
 pub mod design;
 pub mod value;
 
-pub use content::{Contact, Cv, EntryItem, KeyValueItem, Link, Section, SectionBody};
+pub use content::{Contact, Cv, EntryItem, KeyValueItem, Link, MarkdownText, Section, SectionBody};
 pub use design::{Colors, Design, FitFloor, Fonts, Margins, Page, Sizes, Spacing};
 pub use value::{Color, Length, LengthUnit, LineHeight};
 
@@ -34,8 +34,14 @@ pub struct Document {
 }
 
 impl Document {
-    /// Parse a YAML string into a [`Document`].
+    /// Deserialize a YAML string, keeping the raw `serde_yaml_ng` error: its location
+    /// becomes the span of the user-facing diagnostic (ADR-0014).
+    pub fn parse_yaml(yaml: &str) -> std::result::Result<Self, serde_yaml_ng::Error> {
+        serde_yaml_ng::from_str(yaml)
+    }
+
+    /// Parse a YAML string into a [`Document`] with the tool's own error type.
     pub fn from_yaml_str(yaml: &str) -> Result<Self> {
-        serde_yaml_ng::from_str(yaml).map_err(Error::from)
+        Self::parse_yaml(yaml).map_err(Error::from)
     }
 }

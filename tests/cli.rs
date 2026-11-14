@@ -125,6 +125,32 @@ fn templates_listing_survives_quiet() {
 }
 
 /// Plan 2.3: `cv schema` prints the derived JSON Schema and succeeds.
+/// Piping a listing is normal use: the reader hangs up after the first line, the tool
+/// stops writing and succeeds — it must not panic on the closed pipe.
+#[test]
+#[cfg(unix)]
+fn a_closed_reader_ends_the_listing_quietly() {
+    let bin = env!("CARGO_BIN_EXE_cv").replace('\'', "'\\''");
+    let output = Command::new("bash")
+        .args([
+            "-o",
+            "pipefail",
+            "-c",
+            &format!("'{bin}' fonts | head -n 1 > /dev/null"),
+        ])
+        .output()
+        .expect("bash runs");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "the pipeline must succeed, stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("panicked"),
+        "a hung-up reader is not a crash: {stderr}"
+    );
+}
+
 #[test]
 fn schema_prints_derived_json_schema() {
     let output = cv().arg("schema").output().expect("binary runs");

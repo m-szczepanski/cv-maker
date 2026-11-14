@@ -3,93 +3,125 @@
 //! The typed model parse (serde) already rejects unknown keys, wrong types and malformed
 //! lengths/colors — those surface as parse-time diagnostics. This module runs afterwards
 //! and checks *values*: schema version, template reference (built-in name or custom
-//! folder, plan 5.3), font families, link URLs, duplicate section titles, and design
-//! fields the chosen template declares unsupported (plan 3.5) or whose manifest
-//! contradicts the template sources (plan 5.4). All errors of all checks are collected,
-//! not just the first (spec §5).
+//! folder, plan 5.3), font families, contact and Markdown link URLs, duplicate section
+//! titles, and design fields the chosen template declares unsupported (plan 3.5) or
+//! whose manifest contradicts the template sources (plan 5.4). All errors of all checks
+//! are collected, not just the first (spec §5).
 
 pub mod spans;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use miette::Severity;
 
 use crate::error::{Diag, Error};
 use crate::model::{Cv, Design, Document};
 use crate::suggest::closest_match;
+use crate::templates::Template;
 use crate::templates::manifest::DESIGN_GROUPS;
 
-/// Result of validating one YAML file: errors fail the build, warnings do not (ADR-0015).
+/// Result of running the checks over one YAML file (ADR-0015).
 #[derive(Debug, Default)]
-pub struct ValidationResult {
-    pub errors: Vec<Diag>,
-    pub warnings: Vec<Diag>,
+struct Checks {
+    errors: Vec<Diag>,
+    warnings: Vec<Diag>,
+    /// The template `design.template` resolved to, once `check_template` has run.
+    template: Option<Template>,
 }
 
-impl ValidationResult {
-    pub fn is_ok(&self) -> bool {
-        self.errors.is_empty()
-    }
+/// The outcome of validating one YAML file.
+#[derive(Debug)]
+pub enum Outcome {
+    /// The CV can render: the template its reference resolved to, plus the warnings
+    /// that never fail a build. Handing the template back means the render uses
+    /// exactly what was checked, and reads the folder once, not twice.
+    Valid {
+        template: Template,
+        warnings: Vec<Diag>,
+    },
+    /// Every error the checks found, in check order (spec §5: all errors, not the
+    /// first one).
+    Invalid(Vec<Diag>),
 }
 
 /// Run every semantic check against the parsed document.
 ///
 /// `yaml_source` is needed for span lookup (ADR-0014); `source_name` is the file name
-/// shown in diagnostic snippets. `font_dirs` are the user font directories
-/// (`--font-path` + `design.font_paths`, relative to the input file). `base_dir` is the
-/// input file's directory, the anchor for custom template path references (ADR-0027).
+/// shown in diagnostic snippets. `font_items` are the user font files already read by
+/// the caller (`--font-path` + `design.font_paths`). `base_dir` is the input file's
+/// directory, the anchor for custom template path references (ADR-0027).
 pub fn validate(
     yaml_source: &str,
     source_name: &str,
     document: &Document,
-    font_dirs: &[PathBuf],
+    font_items: &[Vec<u8>],
     base_dir: &Path,
-) -> ValidationResult {
+) -> Outcome {
     let spans = spans::scalar_spans(yaml_source);
     let source = miette::NamedSource::new(source_name, yaml_source.to_owned());
-    let mut result = ValidationResult::default();
+    let mut checks = Checks::default();
 
-    check_schema_version(document.schema, &spans, &source, &mut result);
-    check_template(&document.design, base_dir, &spans, &source, &mut result);
-    check_fonts(&document.design, font_dirs, &spans, &source, &mut result);
-    check_urls(&document.cv, &spans, &source, &mut result);
-    check_duplicate_titles(&document.cv, &spans, &source, &mut result);
+    check_schema_version(document.schema, &spans, &source, &mut checks);
+    check_template(&document.design, base_dir, &spans, &source, &mut checks);
+    check_fonts(&document.design, font_items, &spans, &source, &mut checks);
+    check_urls(&document.cv, &spans, &source, &mut checks);
+    check_markdown_urls(&document.cv, &spans, &source, &mut checks);
+    check_duplicate_titles(&document.cv, &spans, &source, &mut checks);
 
-    result
+    let Some(template) = checks.template else {
+        // `check_template` reports why a reference did not resolve, so this path
+        // already carries its error along with everything else that was found.
+        return Outcome::Invalid(checks.errors);
+    };
+    if checks.errors.is_empty() {
+        Outcome::Valid {
+            template,
+            warnings: checks.warnings,
+        }
+    } else {
+        Outcome::Invalid(checks.errors)
+    }
 }
 
-/// Diagnostic labeled at the value at `path`, when the span scan knows it.
-fn labeled(
+/// Diagnostic for the value at `path`.
+///
+/// Labeled at the value's span when the span scan knows one; a value written as a
+/// YAML alias has no span of its own (the text lives at the anchor), so the check
+/// reports the resolved value without a snippet (ADR-0014, ADR-0036).
+fn diag_at(
     spans: &spans::SpanMap,
     source: &miette::NamedSource<String>,
     path: &str,
-    message: impl Into<String>,
-    label: impl Into<String>,
-) -> Option<Diag> {
-    let span = spans.get(path)?;
-    Some(Diag::error(message, label, span, source.clone()))
+    message: String,
+    label: &str,
+    severity: Severity,
+) -> Diag {
+    let diag = match spans.get(path) {
+        Some(span) => Diag::error(message, label, span, source.clone()),
+        None => Diag::plain(message, severity),
+    };
+    Diag { severity, ..diag }
 }
 
 fn check_schema_version(
     version: u32,
     spans: &spans::SpanMap,
     source: &miette::NamedSource<String>,
-    result: &mut ValidationResult,
+    result: &mut Checks,
 ) {
     if version != 1 {
         let message = format!("unsupported schema version {version}");
-        // The `labeled` fallback is unreachable when the typed parse succeeded: `schema`
-        // was then a scalar, and the span scan reads the same source with the same event
-        // grammar, so `spans.get("schema")` is always Some here.
-        let diag = labeled(spans, source, "schema", message, "this schema version")
-            .unwrap_or_else(|| {
-                Diag::plain(
-                    format!("unsupported schema version {version}"),
-                    Severity::Error,
-                )
-            })
-            .with_help("this tool understands schema version 1");
-        result.errors.push(diag);
+        let diag = diag_at(
+            spans,
+            source,
+            "schema",
+            message,
+            "this schema version",
+            Severity::Error,
+        );
+        result
+            .errors
+            .push(diag.with_help("this tool understands schema version 1"));
     }
 }
 
@@ -106,7 +138,7 @@ fn check_template(
     base_dir: &Path,
     spans: &spans::SpanMap,
     source: &miette::NamedSource<String>,
-    result: &mut ValidationResult,
+    result: &mut Checks,
 ) {
     let reference = &design.template;
     let template = match crate::templates::load(reference, base_dir) {
@@ -120,17 +152,14 @@ fn check_template(
                 }
                 other => other.to_string(),
             };
-            // The plain fallback cannot run when the typed parse succeeded: a scalar
-            // at `design.template` is always in the span map (same invariant as
-            // `check_schema_version`).
-            let diag = labeled(
+            let diag = diag_at(
                 spans,
                 source,
                 "design.template",
-                message.clone(),
+                message,
                 "this template name",
-            )
-            .unwrap_or_else(|| Diag::plain(message, Severity::Error));
+                Severity::Error,
+            );
             let diag = if crate::templates::is_path_like(reference) {
                 diag.with_help(
                     "a custom template is a folder with template.typ and manifest.yaml, referenced relative to the YAML file",
@@ -160,37 +189,39 @@ fn check_template(
     if crate::templates::is_path_like(reference) {
         check_manifest_consistency(&template, spans, source, result);
     }
+    result.template = Some(template);
 }
 
 fn check_fonts(
     design: &Design,
-    font_dirs: &[PathBuf],
+    font_items: &[Vec<u8>],
     spans: &spans::SpanMap,
     source: &miette::NamedSource<String>,
-    result: &mut ValidationResult,
+    result: &mut Checks,
 ) {
-    let available = match crate::render::fonts::available_font_families(font_dirs) {
-        Ok(families) => families,
-        Err(e) => {
-            // Font directories could not be read: surface it, skip family checks.
-            result
-                .errors
-                .push(Diag::plain(e.to_string(), Severity::Error));
-            return;
-        }
-    };
+    let available = crate::render::fonts::available_font_families(font_items);
 
     for (field, family) in [
         ("design.fonts.body", &design.fonts.body),
         ("design.fonts.heading", &design.fonts.heading),
         ("design.fonts.mono", &design.fonts.mono),
     ] {
-        if available.iter().any(|known| known == family) {
+        // Typst resolves a family name case-insensitively (pinned 0.15.1: the selector
+        // is lowercased before the book lookup), so validation must not be stricter
+        // than rendering (ADR-0031). `cv fonts` and the hints speak canonical names.
+        let wanted = family.to_lowercase();
+        if available.iter().any(|known| known.to_lowercase() == wanted) {
             continue;
         }
         let message = format!("unknown font \"{family}\"");
-        let diag = labeled(spans, source, field, message.clone(), "this font family")
-            .unwrap_or_else(|| Diag::plain(message, Severity::Error));
+        let diag = diag_at(
+            spans,
+            source,
+            field,
+            message,
+            "this font family",
+            Severity::Error,
+        );
         let diag = match closest_match(family, &available) {
             Some(best) => diag.with_help(format!("did you mean \"{best}\"?")),
             None => diag.with_help(
@@ -205,7 +236,7 @@ fn check_urls(
     cv: &Cv,
     spans: &spans::SpanMap,
     source: &miette::NamedSource<String>,
-    result: &mut ValidationResult,
+    result: &mut Checks,
 ) {
     let links = cv.links();
     for (index, url) in links {
@@ -214,9 +245,15 @@ fn check_urls(
         }
         let path = format!("cv.contact.links[{index}].url");
         let message = format!("malformed URL \"{url}\"");
-        let diag = labeled(spans, source, &path, message.clone(), "this link URL")
-            .unwrap_or_else(|| Diag::plain(message, Severity::Error))
-            .with_help("URLs must start with http:// or https:// and include a host");
+        let diag = diag_at(
+            spans,
+            source,
+            &path,
+            message,
+            "this link URL",
+            Severity::Error,
+        )
+        .with_help("URLs must start with http:// or https:// and include a host");
         result.errors.push(diag);
     }
 }
@@ -225,7 +262,7 @@ fn check_duplicate_titles(
     cv: &Cv,
     spans: &spans::SpanMap,
     source: &miette::NamedSource<String>,
-    result: &mut ValidationResult,
+    result: &mut Checks,
 ) {
     let mut seen: Vec<&str> = Vec::new();
     for (index, section) in cv.sections.iter().enumerate() {
@@ -253,19 +290,14 @@ fn check_duplicate_titles(
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        let diag =
-            labeled(spans, source, &path, message, "first occurrence").unwrap_or_else(|| {
-                // Same invariant as `check_schema_version`: a parsed section title is
-                // always in the span map, so the plain fallback cannot run.
-                Diag::plain(
-                    format!("section title \"{}\" is used more than once", section.title),
-                    Severity::Warning,
-                )
-            });
-        result.warnings.push(Diag {
-            severity: Severity::Warning,
-            ..diag
-        });
+        result.warnings.push(diag_at(
+            spans,
+            source,
+            &path,
+            message,
+            "first occurrence",
+            Severity::Warning,
+        ));
     }
 }
 
@@ -285,6 +317,44 @@ fn is_well_formed_url(url: &str) -> bool {
     !url.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
+/// Reject Markdown links whose URL Typst cannot turn into a hyperlink (ADR-0017,
+/// ADR-0034): the same conservative check as the contact links, because an empty URL
+/// fails the compile (labeling it a *template* error) and a schemeless one would render
+/// a link that goes nowhere.
+fn check_markdown_urls(
+    cv: &Cv,
+    spans: &spans::SpanMap,
+    source: &miette::NamedSource<String>,
+    result: &mut Checks,
+) {
+    const HELP: &str = "link URLs must start with http:// or https:// and include a host";
+    for field in cv.markdown_texts() {
+        for token in crate::markdown::parse_inline(field.text) {
+            let crate::markdown::InlineToken::Link { text: label, url } = token else {
+                continue;
+            };
+            if is_well_formed_url(&url) {
+                continue;
+            }
+            let message = if url.is_empty() {
+                format!("the Markdown link \"{label}\" has no URL")
+            } else {
+                format!("malformed URL \"{url}\" in the Markdown link \"{label}\"")
+            };
+            let diag = diag_at(
+                spans,
+                source,
+                &field.span_path,
+                message,
+                "this Markdown link",
+                Severity::Error,
+            )
+            .with_help(HELP);
+            result.errors.push(diag);
+        }
+    }
+}
+
 /// Warn when the YAML writes values under a design group the template does not declare
 /// supported (plan 3.5): the render will silently ignore them (spec §6).
 ///
@@ -295,7 +365,7 @@ fn check_manifest_support(
     supported: &[String],
     spans: &spans::SpanMap,
     source: &miette::NamedSource<String>,
-    result: &mut ValidationResult,
+    result: &mut Checks,
 ) {
     for group in DESIGN_GROUPS {
         if supported.iter().any(|declared| declared == group) {
@@ -327,7 +397,7 @@ fn check_manifest_consistency(
     template: &crate::templates::Template,
     spans: &spans::SpanMap,
     source: &miette::NamedSource<String>,
-    result: &mut ValidationResult,
+    result: &mut Checks,
 ) {
     for group in DESIGN_GROUPS {
         let declared = template
@@ -349,29 +419,15 @@ fn check_manifest_consistency(
                 template.name
             )
         };
-        let diag = labeled(
+        let diag = diag_at(
             spans,
             source,
             "design.template",
             message,
             "template used here",
-        )
-        .unwrap_or_else(|| {
-            // Unreachable from a successful check: a path reference was written by
-            // the user, so `design.template` is in the span map (same invariant as
-            // `check_schema_version`).
-            Diag::plain(
-                format!(
-                    "template '{}' and its manifest.yaml disagree on '{group}'",
-                    template.name
-                ),
-                Severity::Warning,
-            )
-        });
-        result.warnings.push(Diag {
-            severity: Severity::Warning,
-            ..diag
-        });
+            Severity::Warning,
+        );
+        result.warnings.push(diag);
     }
 }
 
@@ -405,11 +461,76 @@ mod tests {
         assert!(!is_well_formed_url("https://example.dev/\n"));
     }
 
+    /// The URLs inside Markdown are checked where they are written, so every
+    /// Markdown-enabled field is covered (ADR-0034).
+    #[test]
+    fn markdown_link_urls_are_checked_in_every_markdown_field() {
+        let yaml = concat!(
+            "schema: 1\ncv:\n  name: X\n",
+            "  summary: see [a](github.com/x)\n",
+            "  sections:\n",
+            "    - title: E\n      type: entries\n      items:\n",
+            "        - heading: H\n          bullets:\n            - also [b]()\n",
+            "    - title: B\n      type: bullets\n      items:\n",
+            "        - flat [c](ftp://x)\n",
+            "    - title: T\n      type: text\n      items:\n",
+            "        - para [d](https://ok.dev)\n",
+        );
+        let document = crate::model::Document::from_yaml_str(yaml).expect("parses");
+        let errors = markdown_url_errors(&document.cv, yaml);
+        let messages: Vec<&str> = errors.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "malformed URL \"github.com/x\" in the Markdown link \"a\"",
+                "the Markdown link \"b\" has no URL",
+                "malformed URL \"ftp://x\" in the Markdown link \"c\"",
+            ],
+            "the valid link stays quiet; each field reports its own problem"
+        );
+        assert!(
+            errors.iter().all(|d| d.labels.len() == 1),
+            "every problem is labeled at the field that holds it"
+        );
+        assert!(
+            errors.iter().all(|d| d
+                .help
+                .as_deref()
+                .is_some_and(|h| h.contains("http:// or https://"))),
+            "the help explains the rule"
+        );
+    }
+
+    fn markdown_url_errors(cv: &crate::model::Cv, yaml: &str) -> Vec<Diag> {
+        let spans = spans::scalar_spans(yaml);
+        let source = miette::NamedSource::new("cv.yaml", yaml.to_owned());
+        let mut result = Checks::default();
+        check_markdown_urls(cv, &spans, &source, &mut result);
+        result.errors
+    }
+
+    #[test]
+    fn a_value_the_span_scan_does_not_know_is_reported_without_a_snippet() {
+        // The shape a YAML alias produces: the value is known, its text is not.
+        let mut result = Checks::default();
+        let source = miette::NamedSource::new("cv.yaml", "schema: 2\n".to_owned());
+        check_schema_version(2, &spans::SpanMap::default(), &source, &mut result);
+        assert_eq!(result.errors.len(), 1);
+        let diag = &result.errors[0];
+        assert_eq!(diag.message, "unsupported schema version 2");
+        assert!(diag.labels.is_empty(), "no span, no label");
+        assert_eq!(
+            diag.help.as_deref(),
+            Some("this tool understands schema version 1")
+        );
+        assert_eq!(diag.severity, Severity::Error);
+    }
+
     fn support_warnings(yaml: &str, supported: &[&str]) -> Vec<Diag> {
         let spans = spans::scalar_spans(yaml);
         let source = miette::NamedSource::new("cv.yaml", yaml.to_owned());
         let supported: Vec<String> = supported.iter().map(|s| (*s).to_owned()).collect();
-        let mut result = ValidationResult::default();
+        let mut result = Checks::default();
         check_manifest_support("plain", &supported, &spans, &source, &mut result);
         result.warnings
     }
@@ -433,7 +554,7 @@ mod tests {
         let yaml = "design:\n  template: ./custom\n";
         let spans = spans::scalar_spans(yaml);
         let source = miette::NamedSource::new("cv.yaml", yaml.to_owned());
-        let mut result = ValidationResult::default();
+        let mut result = Checks::default();
         check_manifest_consistency(template, &spans, &source, &mut result);
         result.warnings
     }

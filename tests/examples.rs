@@ -67,7 +67,7 @@ fn every_example_builds_a_one_page_pdf() {
 
 /// The `full` example demonstrates the Markdown subset in its rendered text: markers in
 /// Markdown-enabled fields are gone from the extractable text (bold/italic are styling,
-/// code/link labels stay). Headline markers stay literal by design (ADR-0016).
+/// code/link labels stay).
 #[test]
 fn markdown_markers_do_not_leak_into_the_pdf_text() {
     let dir = examples_dir();
@@ -149,6 +149,6 @@ fn every_example_builds_with_every_builtin_template() {
 /// The derived JSON Schema is pinned byte-for-byte (plan 2.8, ADR-0019).
 #[test]
 fn schema_output_matches_snapshot() {
-    let schema = cv::commands::schema::schema_json().expect("schema serializes");
+    let schema = cv::commands::schema::schema_json();
     insta::assert_snapshot!(schema);
 }

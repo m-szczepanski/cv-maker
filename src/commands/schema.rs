@@ -2,21 +2,16 @@
 
 use crate::error::Result;
 
-pub fn run() -> Result<()> {
+/// The schema as a pretty JSON string — shared by `cv schema` and `cv init` (which
+/// writes `cv.schema.json` next to the starter) and by the snapshot tests.
+pub fn schema_json() -> String {
     let schema = schemars::schema_for!(crate::model::Document);
-    // Serializing a freshly derived schemars document cannot fail: every model type is
-    // JSON-representable by construction, so the Internal arm is unreachable.
-    let json = serde_json::to_string_pretty(&schema)
-        .map_err(|e| crate::error::Error::Internal(format!("schema serialization failed: {e}")))?;
-    println!("{json}");
-    Ok(())
+    // Every model type is JSON-representable by construction, so a derived schema
+    // always serializes; a failure here would be a `cv` bug, not user input (rule 14).
+    serde_json::to_string_pretty(&schema).expect("a derived JSON Schema always serializes")
 }
 
-/// The schema as a pretty JSON string — shared with `cv init` (writes `cv.schema.json`)
-/// and the snapshot tests.
-pub fn schema_json() -> Result<String> {
-    let schema = schemars::schema_for!(crate::model::Document);
-    // Same invariant as in `run`: derived schemas always serialize.
-    serde_json::to_string_pretty(&schema)
-        .map_err(|e| crate::error::Error::Internal(format!("schema serialization failed: {e}")))
+pub fn run() -> Result<()> {
+    crate::commands::out_line(&schema_json());
+    Ok(())
 }

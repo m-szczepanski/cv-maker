@@ -25,6 +25,12 @@ impl SpanMap {
         self.spans.get(path).copied()
     }
 
+    /// Record the span of the value at `path`, replacing any earlier entry for it
+    /// (the YAML value a typed parse sees is the one that counts).
+    fn record(&mut self, path: String, span: ByteSpan) {
+        self.spans.insert(path, span);
+    }
+
     /// The span of the first scalar at `path` or anywhere under it (`design.margins`
     /// covers `design.margins.x`). Deterministic in path order — not necessarily the
     /// source order of the user's keys.
@@ -86,6 +92,7 @@ enum Frame {
     Sequence { base: String, next_index: usize },
 }
 
+/// What a scalar, alias or container event does to the path stack.
 struct Walker<'a> {
     source: &'a str,
     map: SpanMap,
@@ -93,19 +100,35 @@ struct Walker<'a> {
 }
 
 impl Walker<'_> {
-    fn record(&mut self, path: String, span: ByteSpan) {
-        self.map.spans.insert(path, span);
+    /// Land one value in the innermost frame. A scalar is either remembered as a
+    /// mapping key or recorded as the value of the pending key; an alias carries no
+    /// text (it lives at the anchor), so it only takes its slot — which keeps later
+    /// siblings aligned and makes the checks that reject it report without a snippet.
+    fn value_landing(&mut self, scalar: Option<(String, ByteSpan)>) {
+        // Disjoint field borrows: the frame says where the value lives, the map
+        // records it, so one pass needs no intermediate decision type.
+        let Walker { map, stack, .. } = self;
+        // A document with no container (a bare scalar or alias) is not a CV: the
+        // typed parse rejects it before any check asks for a span, so nothing here
+        // would ever be looked up.
+        let Some(frame) = stack.last_mut() else {
+            return;
+        };
+        match frame {
+            Frame::Mapping { base, pending_key } => match (pending_key.take(), scalar) {
+                (None, Some((text, _))) => *pending_key = Some(text),
+                (Some(key), Some((_, span))) => map.record(join_key(base, &key), span),
+                (_, None) => {}
+            },
+            Frame::Sequence { base, next_index } => {
+                let path = format!("{base}[{next_index}]");
+                *next_index += 1;
+                if let Some((_, span)) = scalar {
+                    map.record(path, span);
+                }
+            }
+        }
     }
-}
-
-/// What to do with a scalar event, decided from an immutable stack view so the mutable
-/// phase never overlaps the lookup borrow.
-enum Step {
-    /// A mapping key seen before its value; remember it for the value event.
-    RememberKey(String),
-    /// A scalar value: record it under `path`, then update the owning frame
-    /// (clear the pending key in a mapping, advance the index in a sequence).
-    RecordValue(String),
 }
 
 impl SpannedEventReceiver<'_> for Walker<'_> {
@@ -113,32 +136,9 @@ impl SpannedEventReceiver<'_> for Walker<'_> {
         match event {
             Event::Scalar(value, ..) => {
                 let byte_span = span_of(self.source, span);
-                let step = match self.stack.last() {
-                    Some(Frame::Mapping { base, pending_key }) => match pending_key {
-                        None => Step::RememberKey(value.into_owned()),
-                        Some(key) => Step::RecordValue(join_key(base, key)),
-                    },
-                    Some(Frame::Sequence { base, next_index }) => {
-                        Step::RecordValue(format!("{base}[{next_index}]"))
-                    }
-                    None => Step::RecordValue(String::new()),
-                };
-                match step {
-                    Step::RememberKey(key) => {
-                        if let Some(Frame::Mapping { pending_key, .. }) = self.stack.last_mut() {
-                            *pending_key = Some(key);
-                        }
-                    }
-                    Step::RecordValue(path) => {
-                        self.record(path, byte_span);
-                        match self.stack.last_mut() {
-                            Some(Frame::Mapping { pending_key, .. }) => *pending_key = None,
-                            Some(Frame::Sequence { next_index, .. }) => *next_index += 1,
-                            None => {}
-                        }
-                    }
-                }
+                self.value_landing(Some((value.into_owned(), byte_span)));
             }
+            Event::Alias(_) => self.value_landing(None),
             Event::MappingStart(..) | Event::SequenceStart(..) => {
                 let base = match self.stack.last_mut() {
                     Some(Frame::Mapping { base, pending_key }) => {
@@ -170,7 +170,6 @@ impl SpannedEventReceiver<'_> for Walker<'_> {
             | Event::StreamEnd
             | Event::DocumentStart(_)
             | Event::DocumentEnd
-            | Event::Alias(_)
             | Event::Nothing => {}
         }
     }
@@ -248,6 +247,36 @@ mod tests {
     }
 
     #[test]
+    fn an_aliased_value_has_no_span_and_does_not_shift_its_siblings() {
+        // The regression: an alias consumed the *next* key's slot, so every later
+        // value in the same mapping was labeled at the wrong place.
+        let yaml = "cv:\n  name: &n Jane Doe\n  headline: *n\n  location: Berlin\n";
+        let map = scalar_spans(yaml);
+        assert!(
+            map.get("cv.headline").is_none(),
+            "the alias text lives at the anchor, not here"
+        );
+        let (start, end) = map
+            .get("cv.location")
+            .expect("the sibling after an alias keeps its own span");
+        assert_eq!(&yaml[start..end], "Berlin");
+        let (start, end) = map.get("cv.name").expect("the anchor is recorded");
+        let anchored = &yaml[start..end];
+        assert!(anchored.ends_with("Jane Doe"), "anchored span: {anchored}");
+    }
+
+    #[test]
+    fn an_aliased_sequence_element_advances_the_index() {
+        let yaml = "cv:\n  name: X\n  sections:\n    - title: &t A\n      type: text\n      items: []\n    - title: *t\n      type: text\n      items: []\n";
+        let map = scalar_spans(yaml);
+        assert!(map.get("cv.sections[1].title").is_none());
+        let (start, end) = map
+            .get("cv.sections[1].type")
+            .expect("the key after an aliased title is still `type`");
+        assert_eq!(&yaml[start..end], "text");
+    }
+
+    #[test]
     fn first_used_covers_a_group_and_an_exact_scalar() {
         let yaml = "design:\n  page: a4\n  margins: { x: 1cm, y: 1cm }\n";
         let map = scalar_spans(yaml);
@@ -274,10 +303,30 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_scalar_document_records_the_empty_path() {
+    fn an_aliased_sequence_element_takes_its_slot_without_a_span() {
+        let yaml = "schema: 1\ndesign:\n  font_paths: [&p fonts, *p, extra]\n";
+        let map = scalar_spans(yaml);
+        let (start, end) = map
+            .get("design.font_paths[0]")
+            .expect("the anchored element is recorded");
+        assert!(yaml[start..end].ends_with("fonts"), "got: {end}");
+        assert!(
+            map.get("design.font_paths[1]").is_none(),
+            "the alias itself has no span"
+        );
+        let (start, end) = map
+            .get("design.font_paths[2]")
+            .expect("the index advances past the alias");
+        assert_eq!(&yaml[start..end], "extra");
+    }
+
+    #[test]
+    fn a_document_with_no_container_records_no_paths() {
         let yaml = "just text\n";
         let map = scalar_spans(yaml);
-        let (start, end) = map.get("").expect("root scalar span");
-        assert_eq!(&yaml[start..end], "just text");
+        assert!(
+            map.get("").is_none(),
+            "there is no field path to look such a value up by"
+        );
     }
 }

@@ -1,0 +1,21 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  × malformed URL "github.com/me/lab" in the Markdown link "lab"
+   ╭─[cv.yaml:4:12]
+ 3 │   name: Jane Doe
+ 4 │   summary: My work is at [lab](github.com/me/lab) and [home]().
+   ·            ──────────────────────────┬─────────────────────────
+   ·                                      ╰── this Markdown link
+   ╰────
+  help: link URLs must start with http:// or https:// and include a host
+
+  × the Markdown link "home" has no URL
+   ╭─[cv.yaml:4:12]
+ 3 │   name: Jane Doe
+ 4 │   summary: My work is at [lab](github.com/me/lab) and [home]().
+   ·            ──────────────────────────┬─────────────────────────
+   ·                                      ╰── this Markdown link
+   ╰────
+  help: link URLs must start with http:// or https:// and include a host

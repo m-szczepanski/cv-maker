@@ -164,6 +164,15 @@ fn color_parsing_accepts_3_and_6_digit_hex() {
         serde_yaml_ng::from_str::<Color>("\"#25b\"").unwrap(),
         Color::new(0x22, 0x55, 0xbb)
     );
+    // Hex digits are case-insensitive, like every other color notation.
+    assert_eq!(
+        serde_yaml_ng::from_str::<Color>("\"#2563EB\"").unwrap(),
+        Color::new(0x25, 0x63, 0xeb)
+    );
+    assert_eq!(
+        serde_yaml_ng::from_str::<Color>("\"#2AB\"").unwrap(),
+        Color::new(0x22, 0xaa, 0xbb)
+    );
     assert!(serde_yaml_ng::from_str::<Color>("\"2563eb\"").is_err());
     assert!(serde_yaml_ng::from_str::<Color>("\"#2563\"").is_err());
     assert!(serde_yaml_ng::from_str::<Color>("\"#zzzzzz\"").is_err());
@@ -172,6 +181,27 @@ fn color_parsing_accepts_3_and_6_digit_hex() {
     // character count; regression test for a mid-character byte-slice panic).
     assert!(serde_yaml_ng::from_str::<Color>("\"#€abc\"").is_err());
     assert!(serde_yaml_ng::from_str::<Color>("\"#ab€c\"").is_err());
+}
+
+/// Every place a bad digit can sit gets the same typed error, never a panic: the
+/// high digit, the low digit, each of the three pairs, and the short form.
+#[test]
+fn each_invalid_hex_digit_position_is_rejected_by_name() {
+    for bad in ["#2$63eb", "#25$3eb", "#256$eb", "#2563e$", "#2$563"] {
+        let err = serde_yaml_ng::from_str::<Color>(&format!("\"{bad}\""))
+            .expect_err("{bad} is not a color");
+        assert!(
+            err.to_string().contains("hex digits") || err.to_string().contains(bad),
+            "for {bad}, got: {err}"
+        );
+    }
+    for bad in ["#2$6", "#$26"] {
+        let err = serde_yaml_ng::from_str::<Color>(&format!("\"{bad}\"")).expect_err("not a color");
+        assert!(
+            err.to_string().contains("hex digits") || err.to_string().contains(bad),
+            "for {bad}, got: {err}"
+        );
+    }
 }
 
 #[test]
@@ -234,6 +264,47 @@ fn color_type_errors_name_the_expected_shape() {
         msg.contains("a hex color like \"#2563eb\""),
         "error should explain colors, got: {msg}"
     );
+}
+
+#[test]
+fn markdown_texts_lists_the_markdown_fields_in_source_order() -> Result<()> {
+    let yaml = concat!(
+        "schema: 1\ncv:\n  name: X\n  headline: plain\n",
+        "  summary: the summary\n",
+        "  sections:\n",
+        "    - title: E\n      type: entries\n      items:\n",
+        "        - heading: H\n          bullets: [one, two]\n",
+        "    - title: K\n      type: key_values\n",
+        "      items: [{ key: K, value: V }]\n",
+        "    - title: B\n      type: bullets\n      items: [flat]\n",
+        "    - title: T\n      type: text\n      items: [para]\n",
+    );
+    let doc = Document::from_yaml_str(yaml)?;
+    let listed: Vec<(String, &str)> = doc
+        .cv
+        .markdown_texts()
+        .iter()
+        .map(|field| (field.span_path.clone(), field.text))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("cv.summary".to_owned(), "the summary"),
+            ("cv.sections[0].items[0].bullets[0]".to_owned(), "one"),
+            ("cv.sections[0].items[0].bullets[1]".to_owned(), "two"),
+            ("cv.sections[2].items[0]".to_owned(), "flat"),
+            ("cv.sections[3].items[0]".to_owned(), "para"),
+        ],
+        "headings, orgs, keys and titles are not Markdown fields (ADR-0016)"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_document_without_markdown_fields_lists_none() -> Result<()> {
+    let doc = Document::from_yaml_str("schema: 1\ncv:\n  name: X\n")?;
+    assert!(doc.cv.markdown_texts().is_empty());
+    Ok(())
 }
 
 #[test]

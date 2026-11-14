@@ -7,13 +7,13 @@ use crate::error::Result;
 
 pub fn run(args: &CheckArgs, font_paths: &[PathBuf]) -> Result<()> {
     let loaded = super::load_cv(Path::new(&args.file), font_paths)?;
-    super::report_warnings(&loaded.validation.warnings);
+    super::report_warnings(&loaded.warnings);
 
-    let count = loaded.validation.warnings.len();
-    println!(
+    let count = loaded.warnings.len();
+    super::out_line(&format!(
         "{} is valid ({count} warning{})",
         args.file.display(),
         if count == 1 { "" } else { "s" },
-    );
+    ));
     Ok(())
 }

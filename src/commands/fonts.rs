@@ -3,8 +3,8 @@
 
 use std::path::PathBuf;
 
-use crate::error::{Error, Result};
-use crate::render::fonts::{FontListing, available_fonts};
+use crate::error::Result;
+use crate::render::fonts::{FontListing, available_fonts, collect_font_dir_files};
 
 /// Render one listing line: family name padded to a stable column, then the source.
 fn format_line(font: &FontListing, width: usize) -> String {
@@ -17,14 +17,14 @@ fn format_line(font: &FontListing, width: usize) -> String {
 }
 
 pub fn run(user_font_dirs: &[PathBuf]) -> Result<()> {
-    let fonts = available_fonts(user_font_dirs).map_err(Error::Render)?;
+    let fonts = available_fonts(&collect_font_dir_files(user_font_dirs)?);
     let width = fonts
         .iter()
         .map(|f| f.family.chars().count())
         .max()
         .unwrap_or_default();
     for font in &fonts {
-        println!("{}", format_line(font, width));
+        super::out_line(&format_line(font, width));
     }
     Ok(())
 }

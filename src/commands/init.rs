@@ -76,6 +76,10 @@ design:
     accent: "#2563eb"
     text: "#111111"
     muted: "#555555"
+  fit_one_page: true
+  fit_floor:
+    min_body_size: 8.5pt
+    min_scale: 0.85
 "##;
 
 pub fn run(args: &InitArgs) -> Result<()> {
@@ -105,14 +109,18 @@ pub fn run(args: &InitArgs) -> Result<()> {
     // Write the JSON Schema next to the YAML so the `$schema=./cv.schema.json` header
     // works offline (plan 2.3, ADR-0019).
     let schema_path = schema_path_for(&args.out);
-    std::fs::write(&schema_path, crate::commands::schema::schema_json()?).map_err(|source| {
+    std::fs::write(&schema_path, crate::commands::schema::schema_json()).map_err(|source| {
         Error::Write {
             path: schema_path.display().to_string(),
             message: source.to_string(),
         }
     })?;
 
-    println!("wrote {} (+ {})", args.out.display(), schema_path.display());
+    super::out_line(&format!(
+        "wrote {} (+ {})",
+        args.out.display(),
+        schema_path.display()
+    ));
     Ok(())
 }
 

@@ -9,8 +9,9 @@
 //! Error classes and where they are covered:
 //! - parse errors (unknown key, wrong type, bad color/length, missing required field,
 //!   malformed YAML, unknown section variant): this file.
-//! - semantic errors (bad font, bad URL, unknown template, bad schema version,
-//!   multi-error collection): this file.
+//! - semantic errors (bad font, bad URL, broken Markdown link URL, unknown template,
+//!   bad schema version, multi-error collection): this file.
+//! - diagnostics without a span (a value written as a YAML alias): this file.
 //! - warnings (duplicate title): this file.
 //! - I/O (missing file): this file.
 //! - write errors: `tests/build_examples.rs` (output is a directory).
@@ -18,6 +19,7 @@
 //! - custom template folder errors: `tests/custom_template.rs`.
 //! - unknown `--template` for `init`: `tests/init.rs`.
 //! - watch loop errors: `tests/watch.rs`.
+//! - Typst-special characters rendering literally, never executing: `tests/escaping.rs`.
 
 use std::fs;
 use std::path::PathBuf;
@@ -166,6 +168,30 @@ fn malformed_link_url_is_rejected() {
             "      - label: Site\n        url: github.com/me\n",
         ),
     );
+    assert!(!ok);
+    insta::assert_snapshot!(stderr);
+}
+
+/// A Markdown link with an unusable URL used to pass `cv check` and then fail
+/// `cv build` as a *template* error; it is a user error now (ADR-0034).
+#[test]
+fn malformed_markdown_link_urls_are_rejected() {
+    let (ok, _, stderr) = check_broken(
+        "markdown-url",
+        concat!(
+            "schema: 1\ncv:\n  name: Jane Doe\n",
+            "  summary: My work is at [lab](github.com/me/lab) and [home]().\n",
+        ),
+    );
+    assert!(!ok, "a broken Markdown link must fail the check");
+    insta::assert_snapshot!(stderr);
+}
+
+/// A value written as a YAML alias has no span of its own: the diagnostic names the
+/// resolved value without a snippet, instead of pointing at the wrong line (ADR-0036).
+#[test]
+fn an_aliased_bad_value_is_reported_without_a_snippet() {
+    let (ok, _, stderr) = check_broken("aliased-value", "cv:\n  name: &ver 2\nschema: *ver\n");
     assert!(!ok);
     insta::assert_snapshot!(stderr);
 }

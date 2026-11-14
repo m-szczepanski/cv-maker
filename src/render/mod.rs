@@ -13,13 +13,12 @@
 //! - `typst-as-lib 0.17.0` (`TypstEngine`) wraps the Typst `World`; it supports typst 0.15.
 //! - `typst-pdf 0.15.1`: with `PdfOptions::timestamp: None` and the template setting
 //!   `document(date: none)`, no creation date is written → byte-identical output.
-//! - `tagged: true` (the typst-pdf default) gives a tagged, accessibility-friendly PDF;
-//!   recorded for the §14 open question in docs/decisions.md.
+//! - `tagged: true` (the typst-pdf default) gives a tagged, accessibility-friendly PDF
+//!   on PDF 1.7, with no PDF/A or PDF/UA validator — the §14 question, closed in
+//!   ADR-0038.
 
 pub mod data;
 pub mod fonts;
-
-use std::path::PathBuf;
 
 use typst::foundations::{Dict, IntoValue, Smart};
 use typst_as_lib::{TypstEngine, TypstTemplateCollection, typst_kit_options::TypstKitFontOptions};
@@ -30,14 +29,16 @@ use crate::templates::Template;
 pub use data::page_name;
 pub use fonts::{FontListing, FontSource, available_fonts, bundled_fonts};
 
-/// Everything needed to compile a CV once (plan 1.4.2).
+/// Everything needed to compile a CV once (plan 1.4.2). The caller reads the user font
+/// directories: their files are inputs, and an unreadable directory is an I/O error at
+/// the point where the path came from the user, not a render failure.
 pub struct RenderRequest {
     /// Loaded template (main source + extra sources).
     pub template: Template,
     /// The fully resolved `data.yaml` (see [`data::to_yaml`]).
     pub data_yaml: String,
-    /// User font directories (`design.font_paths` + `--font-path`).
-    pub user_font_dirs: Vec<PathBuf>,
+    /// Font files from `design.font_paths` and `--font-path`, in that order.
+    pub user_font_items: Vec<Vec<u8>>,
 }
 
 /// One compile's result (spec §9).
@@ -66,9 +67,6 @@ pub enum RenderError {
 
     #[error("PDF export failed: {0}")]
     Pdf(String),
-
-    #[error("font error: {0}")]
-    Font(String),
 }
 
 /// Fit-loop scale factors (spec §7), passed to the template through `sys.inputs.fit`
@@ -94,7 +92,7 @@ impl Default for FitParams {
 /// One-shot render (spec §9), used by tests. `cv build` compiles through
 /// [`Engine`] directly so the fit loop can reuse it across iterations.
 pub fn render(req: &RenderRequest) -> std::result::Result<RenderOutput, RenderError> {
-    Engine::build(req)?.compile(FitParams::default())
+    Engine::build(req).compile(FitParams::default())
 }
 
 /// A built compiler environment: fonts and template sources loaded once, reused for every
@@ -105,9 +103,9 @@ pub struct Engine {
 }
 
 impl Engine {
-    /// Load fonts (user dirs → bundled → system) and template sources. Heaviest step;
-    /// done once per build.
-    pub fn build(req: &RenderRequest) -> std::result::Result<Self, RenderError> {
+    /// Load fonts (user files → bundled → system) and template sources. Heaviest step;
+    /// done once per build and reused for every fit-loop compile (plan 1.4.4).
+    pub fn build(req: &RenderRequest) -> Self {
         let mut sources: Vec<(&str, String)> =
             vec![("template.typ", req.template.main_source.clone())];
         sources.extend(
@@ -117,8 +115,7 @@ impl Engine {
                 .map(|(p, c)| (p.as_str(), c.clone())),
         );
 
-        let mut font_items: Vec<Vec<u8>> = fonts::collect_font_dir_files(&req.user_font_dirs)
-            .map_err(|e| RenderError::Font(e.to_string()))?;
+        let mut font_items: Vec<Vec<u8>> = req.user_font_items.clone();
         font_items.extend(
             fonts::bundled_fonts()
                 .iter()
@@ -145,7 +142,7 @@ impl Engine {
             pretty: false,
         };
 
-        Ok(Self { engine, options })
+        Self { engine, options }
     }
 
     /// Compile the document with the given fit scales (spec §9 interface).
@@ -163,9 +160,10 @@ impl Engine {
         })?;
 
         let pdf = typst_pdf::pdf(&doc, &self.options)
-            // PDF export of an already-compiled document only fails on options misuse
-            // (invalid standard combo); the options are fixed constants here, so this is
-            // not reachable from user input or template bugs.
+            // The exporter can refuse a document that compiled: `pdf.attach` with a
+            // malformed MIME type, `pdf.embed` of a file that is not a PDF, an image
+            // format it cannot write. Custom templates can call any Typst function, so
+            // this is a real user-facing class, distinct from a compile failure.
             .map_err(|diags| RenderError::Pdf(format_diags(&diags)))?;
 
         let page_count = doc.pages().len();
@@ -311,7 +309,7 @@ mod tests {
                 extra_sources: vec![],
             },
             data_yaml: "cv: {}".into(),
-            user_font_dirs: vec![],
+            user_font_items: vec![],
         }
     }
 
@@ -324,6 +322,27 @@ mod tests {
             output.overflow_lines >= output.page_count - 1,
             "every overflow page carries at least one text run, got {}",
             output.overflow_lines
+        );
+    }
+
+    /// A document can compile fine and still be refused by the PDF exporter: a template
+    /// that calls `pdf.attach` with a malformed MIME type is the cheapest case. That is
+    /// its own error class — the Typst source was valid, the PDF was not — and a custom
+    /// template can hit it, so the exporter's reason must reach the user (spec §5).
+    #[test]
+    fn a_document_the_pdf_exporter_refuses_is_an_export_error() {
+        let error = render(&test_request(
+            "#pdf.attach(\"data.yaml\", mime-type: \"not a mime type\")",
+        ))
+        .expect_err("the exporter must refuse a malformed mime type");
+        let message = error.to_string();
+        assert!(
+            message.starts_with("PDF export failed:"),
+            "typed as an export error, not a template error: {message}"
+        );
+        assert!(
+            message.contains("mime type"),
+            "the exporter's own reason is kept: {message}"
         );
     }
 
