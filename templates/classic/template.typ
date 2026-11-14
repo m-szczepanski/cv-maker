@@ -1,5 +1,5 @@
-// cv — classic template (spec §6): conventional layout with a header rule and
-// section dividers.
+// cv — classic template (spec §6): conventional single-column layout — name and
+// contact header, title-case accent headings, roomy rhythm, no rules.
 //
 // Contract: reads the virtual `data.yaml` (cv + resolved design) and `sys.inputs.fit`
 // (fit-loop scale factors). Pure Typst; no network, no file system access.
@@ -66,12 +66,11 @@
 // `compact`, pinned by the mono byte-diff test in tests/design_fields.rs).
 #show raw: set text(font: design.fonts.mono)
 
-// Section heading: title-case, bold, with a thin divider rule across the text column.
+// Section heading: title-case, bold, accent-colored; the gap below is the only
+// separation now that the old divider rule is gone (ADR-0030).
 #let section-heading(title) = block(spacing: 0pt, breakable: false)[
   #text(size: heading-size, weight: "bold", fill: accent, font: design.fonts.heading)[#title]
-  #v(-0.3em)
-  #line(length: 100%, stroke: 0.4pt + muted)
-  #v(0.4em)
+  #v(0.45em)
 ]
 
 // One entries item: heading left, dates right; org and location on the second line.
@@ -99,8 +98,8 @@
 }
 
 // ---- Header ----------------------------------------------------------------------
-// Name and headline left, contact stacked right under the same rule (the classic
-// header). All contact parts stay literal text (ADR-0016: no Markdown outside tokens).
+// Name and headline left, contact stacked right (the classic header). All contact
+// parts stay literal text (ADR-0016: no Markdown outside tokens).
 
 #{
   let lines = ()
@@ -130,13 +129,13 @@
         #if lines.len() > 0 [#lines.join(linebreak())]
       ],
     )
-    #v(0.5em)
-    #line(length: 100%, stroke: 0.8pt + accent)
   ]
 }
 
 #if cv.summary != none [
-  #v(section-gap * 0.75)
+  // The header is a block of its own: without the old rule, the section rhythm is
+  // what separates it from the body (ADR-0030).
+  #v(section-gap)
   #par[#inline(cv.summary)]
 ]
 

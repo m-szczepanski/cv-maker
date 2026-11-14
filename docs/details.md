@@ -242,7 +242,9 @@ templates/<name>/
 ### Built-in templates for v1
 
 1. `compact`: dense, single column, ideal for experienced engineers.
-2. `classic`: conventional layout with a header rule and section dividers.
+2. `classic`: conventional single-column layout — name with the contact block on the
+   right, title-case accent headings. No rules or dividers (ADR-0030): the built-ins are
+   clean, minimal and slick, and hierarchy comes from type, color and spacing.
 3. (Optional) `sidebar`: narrow left column for skills and contact.
 
 ### Custom templates

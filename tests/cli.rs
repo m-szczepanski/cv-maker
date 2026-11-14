@@ -104,7 +104,7 @@ fn templates_lists_builtins_with_descriptions() {
         "compact's manifest description must show, got:\n{stdout}"
     );
     assert!(
-        stdout.contains("Conventional layout"),
+        stdout.contains("Conventional single-column"),
         "classic's manifest description must show, got:\n{stdout}"
     );
 }
