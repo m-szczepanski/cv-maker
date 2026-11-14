@@ -5,7 +5,7 @@ this file only records what is done. Mark a task `[x]` only when it is implement
 the Gates pass (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
 `cargo test` — run locally, ADR-0013). Strikethrough tasks are dropped decisions.
 
-- **Current state:** M5 implemented — all tasks done, Gates green; M5 ready for
+- **Current state:** M6 implemented — all tasks done, Gates green; M6 ready for
   review/merge. The M1 visual check (1.7.4) and the M1/M2 review stops are still open.
 
 ## Milestone 0 — Project bootstrap 
@@ -143,11 +143,86 @@ cannot collect the profile of the SIGKILLed e2e subprocess; every decision it ma
 (wake, snapshot equality, catch-up convergence, target re-pointing, watch sync) is
 unit-tested in `src/commands/watch.rs` (see its coverage note).
 
-## Milestone 6 — Polish and release
+## Milestone 6 — Polish and release 🔜 review
 
-- [ ] 6.1 README (quick start, how to use, flags, exit codes) - it has be user centric and good fit for github
-- [ ] 6.2 Close all §14 open questions
-- [ ] 6.3 Release builds for Linux, macOS (x64 + arm64), Windows — locally, no CI
-      (ADR-0013)
-- [ ] 6.4 Fresh-machine test
-- [ ] 6.5 Full audit pass against the spec
+- [x] 6.1 README (`README.md`): user-centred — what the tool does, install (release
+      archives per platform, or `cargo build --release`), the 60-second quick start, the
+      `design`/section/formatting reference, commands and flags, how the one-page fit
+      behaves and what its lines mean, templates (built-in and custom folders), fonts,
+      the error quality bar with an example, and the exit-code table (0 / 1 / 2).
+      Architecture and crate details deliberately left out.
+- [x] 6.2 §14 open questions closed in `docs/decisions.md`: tagged PDF 1.7 with no
+      PDF/A or PDF/UA validator (ADR-0038), one neutral `cv init` example now showing
+      the fit knobs (ADR-0039), variants confirmed non-blocking; the status table has
+      no open rows left.
+- [x] 6.3 Release builds, local matrix (ADR-0037): `scripts/build-release.sh` +
+      `cargo-zigbuild`/`zig` (dev tooling only; no crate dependencies added) produce
+      `dist/cv-0.1.0-{x86_64,aarch64}-apple-darwin.tar.xz`,
+      `dist/cv-0.1.0-{x86_64,aarch64}-unknown-linux-gnu.tar.xz`,
+      `dist/cv-0.1.0-x86_64-pc-windows-gnu.zip` and `dist/SHA256SUMS.txt`. Not published
+      (reviewer's call), `dist/` is gitignored.
+- [x] 6.4 Fresh-machine test: `scripts/fresh-machine-test.sh` unpacks an archive, verifies
+      its checksum, then runs the README quick start from the binary alone in an isolated
+      `HOME` with `PATH=/usr/bin:/bin` and no access to the repository: `templates`,
+      `init`, `check`, `build` → one-page PDF, byte-identical rebuild, starter schema
+      written. Passes for the host triple (Apple silicon); the x86_64 and cross-OS
+      artifacts are built and checksum-verified but only *structure-checked* here, since
+      this machine has no Rosetta, Docker or Wine (ADR-0037 consequence).
+- [x] 6.5 Full audit pass against spec §3–§11, gaps fixed with tests:
+      - §5/§8: `cv check` was *stricter* than rendering on font case (Typst matches
+        family names case-insensitively) — validation now agrees, and `inter` builds
+        byte-identically to `Inter` (ADR-0031).
+      - §5: a Markdown link with a schemeless or empty URL passed `cv check` and then
+        failed `cv build` as a *template* error; Markdown link URLs are validated where
+        they are written (ADR-0033).
+      - §5: the span scan lost alignment on YAML aliases, so a diagnostic for a value
+        after an aliased one pointed at the wrong line — aliases now take their frame
+        slot and report without a snippet (ADR-0033).
+      - §7/ADR-0012: `cv build --quiet` swallowed Typst render warnings (progress and
+        essentials were conflated) — fixed (ADR-0032).
+      - §11: the required escaping class had no e2e test — `tests/escaping.rs` renders
+        `#`, `$`, `*`, `_`, `\`, `@`, backticks and `#panic(...)`/`#show`/`#{ … }`
+        constructs and asserts they stay literal text and one page.
+      - §3: piping a listing (`cv fonts | head -1`) panicked on the closed pipe; stdout
+        and stderr writes are best-effort now and the run exits 0 (test added).
+      - §9: templates and user fonts were each read twice per build (validation, then
+        render) — the resolved template and the font files now travel with `LoadedCv`,
+        so a build reads each once and the render layer holds no unreachable I/O arms
+        (ADR-0034/0035).
+      - §9: the claim that `typst_pdf::pdf` can only fail on option misuse was wrong —
+        it inspects the document while writing it, so a template calling `pdf.attach`
+        with a bad MIME type compiles and is then refused. That is its own error class,
+        tested at the unit and CLI level; the atomic write also flushes before it
+        renames, so no buffered tail can be published (ADR-0040).
+      - §3: `--help` was quoting our own documents (`(spec §3)`, `(M5)`) at users; the
+        wording is user-facing now and the spec mapping stays in the code comments.
+      - Spec §6 text and the `classic` manifest description now match the shipped
+        template; §3 documents the exit codes the README lists.
+- [x] 6.6 Code-quality and comment pass (plan item, plus the 5.8 reviewer note): the
+      full-width `line()` rules are gone from `classic` — both templates were re-rendered
+      and inspected (starter, `full`, and a 14×2 overflowing CV fitted to one page) —
+      ADR-0030. Defensive branches that could not be reached were deleted, turned into
+      stated invariants, or given a test seam (`assemble_builtin`, `WatchFolders`,
+      injected watcher factory) instead of being documented as exceptions (ADR-0036).
+      Stale milestone narration was removed from doc comments; `matches!`-style test
+      assertions that could only ever show a dead branch were rewritten.
+- [x] 6.7 Build time re-measured after the M6 changes (M4 target < 500 ms): release build
+      on this machine, typical first-fit **198–201 ms** (232 ms cold), so the extra
+      fidelity in the fit loop and the single-read refactor cost nothing measurable.
+
+Measured coverage (`cargo llvm-cov`, end of M6): **100.00% lines and 100.00% functions**
+(3930 lines, 544 functions; lines were 96.67% at the end of M5), 99.97% regions —
+`--show-missing-lines` reports nothing at all. The two regions still counted as missed
+are not untested code: one is the `?` continuation on `write_atomic`'s call into the
+write sink (`src/commands/build.rs:108`), where the disk fault is injected one level
+down instead (the `write_to` sink tests), and one is a numeric-literal sub-region inside
+`fit.rs`'s floor guards, whose lines execute (`80|1`, `97|1`) and whose behaviour is
+asserted by `margins_already_below_the_floor_are_never_shrunk` and
+`a_zero_body_size_floors_the_font_phase_at_the_original_scale`.
+
+Everything previously parked as "defensive branch, cannot reach" is now covered by a
+real test rather than a comment: broken built-in asset shapes via `assemble_builtin` over
+synthetic file lists; span-less aliased values via `diag_at` plus an e2e snapshot; the
+watch session's start, wake, rebuild-equality, catch-up, refused registration and dead
+channel exits in-process; a full/failing disk via the write sink; and a PDF the exporter
+refuses via `pdf.attach` with a malformed MIME type (ADR-0040).
