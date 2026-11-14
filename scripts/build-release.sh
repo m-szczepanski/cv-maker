@@ -19,17 +19,21 @@ VERSION="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
 DIST="dist"
 mkdir -p "$DIST"
 
-# target triple → archive command, in the order they are worth building first.
-TARGETS=(
-  "aarch64-apple-darwin"
-  "x86_64-apple-darwin"
-  "x86_64-unknown-linux-gnu"
-  "aarch64-unknown-linux-gnu"
-  "x86_64-pc-windows-gnu"
-)
+# The matrix lives in scripts/release-targets so the fresh-machine test can tell a
+# foreign target apart from a name that is not a release artifact at all.
+ALL_TARGETS=()
+while IFS= read -r line; do
+  case "$line" in ''|'#'*) continue ;; esac
+  ALL_TARGETS+=("$line")
+done < "scripts/release-targets"
 
+TARGETS=("${ALL_TARGETS[@]}")
 if [ $# -ge 1 ]; then
-  TARGETS=("$1")
+  case " ${ALL_TARGETS[*]} " in
+    *" $1 "*) TARGETS=("$1") ;;
+    *) echo "unknown target '$1' (scripts/release-targets lists: ${ALL_TARGETS[*]})" >&2
+       exit 1 ;;
+  esac
 fi
 
 build_one() {
@@ -39,16 +43,25 @@ build_one() {
   # Windows builds the executable as cv.exe; every other target is plain `cv`.
   local entry=cv
   case "$target" in *windows*) entry=cv.exe ;; esac
-  local out="$DIST/cv-$VERSION-$target"
+  local out_name="cv-$VERSION-$target"
+  local out="$DIST/$out_name"
   rm -rf "$out"
   mkdir -p "$out"
   cp "target/$target/release/$entry" "$out/$entry"
   cp LICENSE "$out/LICENSE"
+  # Archive the same bytes twice, get the same file: members in sorted order (bsdtar has
+  # no `--sort`) with pinned timestamps. The builder's uid/gid is still recorded, so the
+  # checksums are stable on a build host rather than across every machine.
+  local -a members=()
+  while IFS= read -r member; do
+    members+=("$member")
+  done < <(cd "$DIST" && find "$out_name" -type f | LC_ALL=C sort)
+  (cd "$DIST" && touch -t 202001010000.00 "${members[@]}")
   case "$entry" in
     *.exe) (cd "$DIST" && rm -f "cv-$VERSION-$target.zip"
-            zip -q -X "cv-$VERSION-$target.zip" "cv-$VERSION-$target/$entry" "cv-$VERSION-$target/LICENSE") ;;
+            zip -q -X "cv-$VERSION-$target.zip" "${members[@]}") ;;
     *) (cd "$DIST" && rm -f "cv-$VERSION-$target.tar.xz"
-        tar -cJf "cv-$VERSION-$target.tar.xz" "cv-$VERSION-$target") ;;
+        tar -cJf "cv-$VERSION-$target.tar.xz" "${members[@]}") ;;
   esac
   rm -rf "$out"
 }
@@ -58,5 +71,12 @@ for target in "${TARGETS[@]}"; do
 done
 
 echo "==> checksums"
-(cd "$DIST" && rm -f SHA256SUMS.txt && shasum -a 256 cv-"$VERSION"-* > SHA256SUMS.txt)
+# Bare file names, sorted, files only: a leftover staging directory from an interrupted
+# build must not end up in the list `shasum -c` is checked against.
+(cd "$DIST" && rm -f SHA256SUMS.txt
+  for artifact in "cv-$VERSION"-*; do
+    [ -f "$artifact" ] && printf '%s\n' "$artifact"
+  done | LC_ALL=C sort | xargs shasum -a 256 > SHA256SUMS.txt
+  # Bare names, not "./name": the file is read from wherever the user unpacked it.
+  sed -i.bak 's|^\./||' SHA256SUMS.txt && rm -f SHA256SUMS.txt.bak)
 ls -la "$DIST"

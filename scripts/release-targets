@@ -1,0 +1,8 @@
+# The release matrix, one target triple per line; both release scripts read this file,
+# so an archive for a target that is not listed here cannot be mistaken for a foreign
+# triple the machine simply cannot run.
+aarch64-apple-darwin
+x86_64-apple-darwin
+x86_64-unknown-linux-gnu
+aarch64-unknown-linux-gnu
+x86_64-pc-windows-gnu

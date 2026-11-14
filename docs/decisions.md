@@ -661,12 +661,22 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   from an unpacked archive in an isolated `HOME` with a minimal `PATH` for the host
   triple, and reports the others as structure-checked but not executed. Reproducing the
   whole matrix on another machine needs zig, cargo-zigbuild and the rustup targets.
-  Which archives are runnable is decided by the **triple in the file name**, never by
-  trying to exec them: an earlier draft treated a failed `--version` as "wrong
-  architecture" and exited 0, so a corrupt or Gatekeeper-blocked artifact — the exact
-  failure a release check exists to catch — passed the acceptance test (found in review;
-  a host-triple artifact that will not run is now a hard failure, and `.zip` archives are
-  unpacked with `unzip` so the script also works on Linux).
+  **Archives are reproducible** (verified by building the whole matrix twice and
+  comparing `SHA256SUMS.txt` byte-for-byte): members go in `LC_ALL=C` order with pinned
+  timestamps, because the first version hashed differently on every run even though the
+  binary inside was identical. The builder's uid/gid remains in the container, so
+  reproducibility holds per build host rather than across arbitrary machines — enough for
+  published checksums, and the reason `--sort`/`--mtime` tar flags were dropped (macOS's
+  bsdtar rejects them; the first "verified reproducible" claim here was wrong precisely
+  because that failed build left the old checksum file in place).
+  Which archives are runnable is decided by the **triple in the file name**, matched
+  against `scripts/release-targets`, never by trying to exec them. An earlier draft
+  treated any failed `--version` as "wrong architecture" and exited 0, so a corrupt or
+  Gatekeeper-blocked artifact — the exact failure this check exists to catch — passed the
+  acceptance test; and a name whose triple was not in the matrix skipped as "another
+  architecture" too. Now a host-triple artifact that will not run is a hard failure, an
+  unclassifiable name is refused, and `.zip` archives are unpacked with `unzip` so the
+  script works on Linux as well.
 
 ## ADR-0038 — tagged PDF 1.7, no PDF/A or PDF/UA validator (§14 closed)
 

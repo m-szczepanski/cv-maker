@@ -36,6 +36,13 @@ if [ ! -f "$ARCHIVE" ]; then
   echo "no archive at $ARCHIVE — run scripts/build-release.sh first" >&2
   exit 1
 fi
+# Only a triple from the release matrix counts as "another target"; anything else is a
+# file this script cannot classify, and must not be reported as an accepted skip.
+if ! grep -qs "^$TRIPLE$" scripts/release-targets; then
+  echo "not a release artifact name: $NAME" >&2
+  echo "expected cv-<version>-<triple>.tar.xz with a triple from scripts/release-targets" >&2
+  exit 1
+fi
 echo "==> artifact: $ARCHIVE (target $TRIPLE)"
 
 SUMS="$(dirname "$ARCHIVE")/SHA256SUMS.txt"

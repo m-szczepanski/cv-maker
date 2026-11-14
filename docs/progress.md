@@ -241,9 +241,18 @@ unit-tested in `src/commands/watch.rs` (see its coverage note).
         name — and a bundle that is a template but fails to load stays a typed internal
         error rather than a crash (ADR-0042).
       - The harness's own version-prefix strip then misread an archive labelled with a
-        different version than the checkout, classifying it as an unknown triple; the
-        triple is parsed by position instead, checked against a renamed host artifact, a
-        Linux triple, a Windows `.zip` and a multi-digit version.
+        different version than the checkout; the triple is parsed by position instead, and
+        — because a name it cannot parse silently became an accepted "not my architecture"
+        skip — it is checked against `scripts/release-targets`, which both release scripts
+        read. Verified: a corrupt host artifact exits 1, an unclassifiable name exits 1, a
+        foreign triple skips, and `build-release.sh` rejects an unknown target.
+      - **Release archives were not reproducible**: rebuilding the same commit hashed
+        differently although the binary inside was byte-identical (member order, mtimes,
+        uid). Members are now sorted with pinned timestamps and two full matrix builds
+        produce an identical `SHA256SUMS.txt` (ADR-0037). The first attempt used
+        GNU-tar-only flags that macOS's bsdtar rejected — and my check of it passed for
+        the wrong reason, comparing a checksum file the failed build had never rewritten,
+        which is why the verification now asserts on a successful build.
       - Three low-severity accuracy fixes: ADR cross-references that cited ADR-0034 for
         ADR-0033's work, a `to_yaml` invariant comment claiming all numbers are finite
         (they are not — nonsense fit floors serialize as `.nan` and are clamped by the
