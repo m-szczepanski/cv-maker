@@ -90,21 +90,17 @@ impl std::fmt::Display for Diag {
 impl std::error::Error for Diag {}
 
 /// Extract a "did you mean" hint from a serde `unknown field` / `unknown variant`
-/// message by suggesting against the names the message says it expected.
-/// Returns `None` when the message does not follow that shape.
+/// message by suggesting against the names the message lists after "expected one of".
+/// Returns `None` when the message does not have that shape or nothing is close.
 fn unknown_key_hint(message: &str) -> Option<String> {
-    let after_unknown = message
-        .find("unknown field `")
-        .map(|i| &message[i + "unknown field `".len()..])
-        .or_else(|| {
-            message
-                .find("unknown variant `")
-                .map(|i| &message[i + "unknown variant `".len()..])
-        })?;
-    let unknown = after_unknown.split('`').next()?;
-    let expected: Vec<String> = message
-        .split("expected one of ")
-        .nth(1)?
+    let after_marker = message
+        .split_once("unknown field `")
+        .or_else(|| message.split_once("unknown variant `"))?
+        .1;
+    // `str::split` yields at least one piece; the first is the quoted name.
+    let unknown = after_marker.split('`').next().unwrap_or_default();
+    let expected_list = message.split_once("expected one of ")?.1;
+    let expected: Vec<String> = expected_list
         .split("`, `")
         .map(|part| part.trim_matches('`').trim_end_matches('.').to_owned())
         .collect();
@@ -163,7 +159,8 @@ pub enum Error {
     #[error("invalid value {value:?}: expected {expected}")]
     InvalidValue { value: String, expected: String },
 
-    /// A command was invoked with an unsupported value (e.g. unknown template name in M1).
+    /// A command was invoked with a value it cannot act on (an unknown `--template`,
+    /// a path with no file name).
     #[error("{0}")]
     Unsupported(String),
 
@@ -225,12 +222,10 @@ pub fn render_diag(diag: &Diag, is_tty: bool) -> String {
     };
     let handler = miette::GraphicalReportHandler::new_themed(theme).with_width(REPORT_WIDTH);
     let mut out = String::new();
-    // Rendering can only fail through `fmt::Error`; writing to a `String` never fails, so
-    // the fallback exists purely to satisfy the signature and cannot realistically run.
-    match handler.render_report(&mut out, diag) {
-        Ok(()) => out,
-        Err(_) => diag.message.clone(),
-    }
+    // `render_report` fails only through its writer, and writing to a `String` cannot
+    // fail; the discarded result is the `fmt::Error` the signature carries anyway.
+    let _ = handler.render_report(&mut out, diag);
+    out
 }
 
 /// Render an error for human consumption at the CLI boundary (plan 1.2.2).
@@ -307,6 +302,40 @@ mod tests {
         assert!(
             rendered.contains("first") && rendered.contains("second"),
             "got: {rendered}"
+        );
+    }
+
+    /// The hint is extracted from serde's own message shapes; every other shape
+    /// stays hint-less rather than inventing one.
+    #[test]
+    fn hints_come_only_from_messages_that_list_the_expected_names() {
+        assert_eq!(
+            unknown_key_hint("unknown field `nmae`, expected one of `name`, `headline`").as_deref(),
+            Some("did you mean 'name'?"),
+            "the field spelling a user meant"
+        );
+        assert_eq!(
+            unknown_key_hint(
+                "unknown variant `entrie`, expected one of `entries`, `key_values`, `bullets`, `text`"
+            )
+            .as_deref(),
+            Some("did you mean 'entries'?"),
+            "a section type is reported as a variant list"
+        );
+        assert_eq!(
+            unknown_key_hint("unknown field `nmae`, expected `one field`"),
+            None,
+            "no 'expected one of' list means nothing to suggest against"
+        );
+        assert_eq!(
+            unknown_key_hint("invalid type: integer, expected a string"),
+            None,
+            "an unrelated message is not a name mistake"
+        );
+        assert_eq!(
+            unknown_key_hint("unknown field `xyzzyq`, expected one of `name`, `headline`"),
+            None,
+            "a typo with no close match must not guess"
         );
     }
 }

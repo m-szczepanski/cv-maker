@@ -121,23 +121,20 @@ fn fits(output: &RenderOutput) -> bool {
     output.page_count <= 1
 }
 
-struct Session<'a, C>
-where
-    C: FnMut(FitParams) -> std::result::Result<RenderOutput, RenderError>,
-{
+struct Session<'a> {
     config: &'a FitConfig,
-    compile: C,
+    compile: Box<dyn FnMut(FitParams) -> std::result::Result<RenderOutput, RenderError> + 'a>,
     compiles: usize,
 }
 
-impl<'a, C> Session<'a, C>
-where
-    C: FnMut(FitParams) -> std::result::Result<RenderOutput, RenderError>,
-{
-    fn new(config: &'a FitConfig, compile: C) -> Self {
+impl<'a> Session<'a> {
+    fn new(
+        config: &'a FitConfig,
+        compile: impl FnMut(FitParams) -> std::result::Result<RenderOutput, RenderError> + 'a,
+    ) -> Self {
         Self {
             config,
-            compile,
+            compile: Box::new(compile),
             compiles: 0,
         }
     }
@@ -210,12 +207,12 @@ where
 /// Smallest `t` in `(0, 1]` that the probe accepts, probed at deterministic
 /// bisection midpoints. Assumes `t = 0` is infeasible. Returns `None` when no
 /// probed point fits.
-fn search_min_feasible<T, E>(
+fn search_min_feasible(
     max_probes: usize,
-    probe: &mut impl FnMut(f64) -> std::result::Result<(bool, T), E>,
-) -> std::result::Result<Option<(f64, T)>, E> {
+    probe: &mut dyn FnMut(f64) -> std::result::Result<(bool, RenderOutput), RenderError>,
+) -> std::result::Result<Option<(f64, RenderOutput)>, RenderError> {
     let (mut lo, mut hi) = (0.0_f64, 1.0_f64);
-    let mut best: Option<(f64, T)> = None;
+    let mut best: Option<(f64, RenderOutput)> = None;
     for _ in 0..max_probes {
         let mid = (lo + hi) / 2.0;
         let (ok, value) = probe(mid)?;
@@ -232,13 +229,13 @@ fn search_min_feasible<T, E>(
 /// Largest `f` in `(floor, 1)` that the probe accepts, at deterministic
 /// bisection midpoints. Assumes `f = 1` is infeasible; the caller probes the
 /// floor itself when this returns `None`.
-fn search_max_feasible<T, E>(
+fn search_max_feasible(
     floor: f64,
     max_probes: usize,
-    probe: &mut impl FnMut(f64) -> std::result::Result<(bool, T), E>,
-) -> std::result::Result<Option<(f64, T)>, E> {
+    probe: &mut dyn FnMut(f64) -> std::result::Result<(bool, RenderOutput), RenderError>,
+) -> std::result::Result<Option<(f64, RenderOutput)>, RenderError> {
     let (mut lo, mut hi) = (floor, 1.0_f64);
-    let mut best: Option<(f64, T)> = None;
+    let mut best: Option<(f64, RenderOutput)> = None;
     for _ in 0..max_probes {
         let mid = (lo + hi) / 2.0;
         let (ok, value) = probe(mid)?;
@@ -285,11 +282,11 @@ mod tests {
 
     /// Session over a fake compiler that fits exactly when `predicate` says so,
     /// recording every probed `FitParams`.
-    fn fake_session(
-        config: &FitConfig,
-        predicate: impl Fn(&FitParams) -> bool,
+    fn fake_session<'a>(
+        config: &'a FitConfig,
+        predicate: impl Fn(&FitParams) -> bool + 'a,
         probes: Rc<RefCell<Vec<FitParams>>>,
-    ) -> Session<'_, impl FnMut(FitParams) -> Result<RenderOutput, RenderError>> {
+    ) -> Session<'a> {
         Session::new(config, move |params| {
             probes.borrow_mut().push(params);
             Ok(output(if predicate(&params) { 1 } else { 2 }))
@@ -587,6 +584,84 @@ mod tests {
         assert!(!outcome.overflowed);
     }
 
+    /// A compile that breaks at a chosen setting: the loop must surface that
+    /// compiler's error from whichever stage probed it (the searches each return
+    /// through a `?`, so a late failure must not be swallowed or retried).
+    fn session_failing_when<'a>(
+        config: &'a FitConfig,
+        fails: impl Fn(&FitParams) -> bool + 'a,
+    ) -> Session<'a> {
+        Session::new(config, move |params| {
+            if fails(&params) {
+                Err(RenderError::Template {
+                    message: format!(
+                        "boom at font {} spacing {}",
+                        params.font_scale, params.spacing_scale
+                    ),
+                })
+            } else {
+                Ok(output(2)) // every other setting overflows, but compiles
+            }
+        })
+    }
+
+    fn never_shrinkable() -> FitConfig {
+        FitConfig {
+            enabled: true,
+            margin_min_scale: 0.8,
+            font_floor: 0.5,
+        }
+    }
+
+    #[test]
+    fn a_compile_error_at_the_phase_a_floor_probe_propagates() {
+        let config = default_config(true);
+        let mut session = session_failing_when(&config, |p| {
+            (p.spacing_scale - SPACING_FLOOR).abs() < 1e-12 && p.font_scale == 1.0
+        });
+        let error = session
+            .run()
+            .expect_err("the floor probe failure must escape");
+        assert!(error.to_string().contains("spacing 0.6"), "got: {error}");
+        assert_eq!(
+            session.compiles,
+            1 + MAX_PHASE_PROBES + 1,
+            "identity + the A grid + the floor probe that broke"
+        );
+    }
+
+    #[test]
+    fn a_compile_error_inside_the_phase_b_search_propagates() {
+        let config = never_shrinkable();
+        let mut session = session_failing_when(&config, |p| {
+            (p.spacing_scale - SPACING_FLOOR).abs() < 1e-12 && p.font_scale < 1.0
+        });
+        let error = session
+            .run()
+            .expect_err("the first Phase B probe failure must escape");
+        assert!(error.to_string().contains("font 0.75"), "got: {error}");
+        assert_eq!(
+            session.compiles,
+            1 + (MAX_PHASE_PROBES + 1) + 1,
+            "identity + A(5+1) + the B probe that broke"
+        );
+    }
+
+    #[test]
+    fn a_compile_error_at_the_font_floor_probe_propagates() {
+        let config = never_shrinkable();
+        let mut session = session_failing_when(&config, |p| (p.font_scale - 0.5).abs() < 1e-12);
+        let error = session
+            .run()
+            .expect_err("the font floor probe failure must escape");
+        assert!(error.to_string().contains("font 0.5"), "got: {error}");
+        assert_eq!(
+            session.compiles,
+            1 + (MAX_PHASE_PROBES + 1) * 2,
+            "the whole budget, the last compile breaking"
+        );
+    }
+
     #[test]
     fn a_compile_error_stops_the_search_immediately_and_propagates() {
         let config = default_config(true);
@@ -607,5 +682,85 @@ mod tests {
             session.compiles, 2,
             "identity, then the first A probe fails"
         );
+    }
+
+    /// A template that breaks only at one setting still aborts the loop with that
+    /// compiler's error wherever the search hits it: the Phase A floor probe, a Phase
+    /// B midpoint, and the final font-floor probe (the three `?` sites left after the
+    /// search itself).
+    #[test]
+    fn a_compile_error_at_the_phase_a_floor_probe_aborts_the_loop() {
+        let config = tight_config();
+        let mut session = Session::new(&config, |params| {
+            if params.font_scale == 1.0 && params.spacing_scale == SPACING_FLOOR {
+                Err(RenderError::Template {
+                    message: "broken at the spacing floor".into(),
+                })
+            } else {
+                Ok(output(2))
+            }
+        });
+        let error = session.run().expect_err("the floor probe must abort");
+        assert!(
+            error.to_string().contains("broken at the spacing floor"),
+            "got: {error}"
+        );
+        assert_eq!(session.compiles, 1 + MAX_PHASE_PROBES + 1);
+    }
+
+    #[test]
+    fn a_compile_error_during_the_phase_b_search_aborts_the_loop() {
+        let config = tight_config();
+        let mut session = Session::new(&config, |params| {
+            if params.spacing_scale == SPACING_FLOOR && (params.font_scale - 0.75).abs() < 1e-9 {
+                Err(RenderError::Template {
+                    message: "broken at font scale 0.75".into(),
+                })
+            } else {
+                Ok(output(2))
+            }
+        });
+        let error = session
+            .run()
+            .expect_err("the first Phase B probe must abort");
+        assert!(
+            error.to_string().contains("broken at font scale 0.75"),
+            "got: {error}"
+        );
+        // identity + A(5+1) + the first B midpoint.
+        assert_eq!(session.compiles, 1 + MAX_PHASE_PROBES + 1 + 1);
+    }
+
+    #[test]
+    fn a_compile_error_at_the_font_floor_probe_aborts_the_loop() {
+        let config = tight_config();
+        let mut session = Session::new(&config, |params| {
+            if params.font_scale == config.font_floor {
+                Err(RenderError::Template {
+                    message: "broken at the font floor".into(),
+                })
+            } else {
+                Ok(output(2))
+            }
+        });
+        let error = session.run().expect_err("the font floor probe must abort");
+        assert!(
+            error.to_string().contains("broken at the font floor"),
+            "got: {error}"
+        );
+        assert_eq!(
+            session.compiles,
+            1 + (MAX_PHASE_PROBES + 1) + MAX_PHASE_PROBES + 1,
+            "the worst case, cut short at the last probe"
+        );
+    }
+
+    /// A config with both phase floors below 1.0, so every stage of the search runs.
+    fn tight_config() -> FitConfig {
+        FitConfig {
+            enabled: true,
+            margin_min_scale: 0.8,
+            font_floor: 0.5,
+        }
     }
 }

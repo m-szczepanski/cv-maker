@@ -16,10 +16,10 @@ pub const SUPPORTED_SCHEMA_VERSION: u32 = 1;
 
 /// A template's `manifest.yaml`.
 ///
-/// `supported` lists the `design.*` fields the template honors. In M3, `cv check` warns when
-/// the YAML uses design fields the template declared unsupported (spec §6). Tool-level
-/// fields (`template`, `fit_one_page`, `fit_floor`, `font_paths`) are not listed because
-/// templates never render them directly.
+/// `supported` lists the `design.*` groups the template honors; `cv check` warns when the
+/// YAML writes a group the template declared unsupported (spec §6). Tool-level fields
+/// (`template`, `fit_one_page`, `fit_floor`, `font_paths`) are not groups: the tool
+/// consumes them, a template cannot ignore them.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {

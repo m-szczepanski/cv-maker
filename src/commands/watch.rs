@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -30,68 +30,166 @@ use crate::model::Document;
 /// `.AGENTS.md` rule 22).
 const DEBOUNCE_QUIET: Duration = Duration::from_millis(100);
 
-/// Watch one CV file until the process is stopped (Ctrl-C): build immediately,
-/// then on every change of the watched content (spec §3).
-///
-/// Coverage note (`cargo llvm-cov`, rule 21): this function runs inside the
-/// `cv watch` subprocess that the e2e tests in `tests/watch.rs` must SIGKILL
-/// (the loop has no external stop signal by design, ADR-0029), so its profile
-/// never flushes and only these glue lines read as uncovered. Every decision
-/// the loop makes — wake/drain, snapshot equality, catch-up convergence,
-/// target re-derivation, watch sync — is unit-tested below; the e2e tests
-/// assert the end-to-end behaviour the glue produces.
-pub fn run(args: &WatchArgs, cli: &Cli) -> Result<()> {
-    let yaml = absolute_input(&args.file)?;
-    // One rebuild is exactly one `cv build` run with the watch defaults: the
-    // resolved output path is `<stem>.pdf` next to the input (spec §3).
-    let build_args = BuildArgs {
-        file: args.file.clone(),
-        output: None,
-        no_fit: false,
-    };
+/// The two watcher operations the loop performs, as a seam: a real `notify` watcher
+/// refuses a folder that exists only on OS watch slots, which no test can arrange,
+/// while the messages that explain it to the user must have tests (rule 16).
+trait WatchFolders {
+    fn watch_folder(&mut self, dir: &Path, mode: RecursiveMode) -> notify::Result<()>;
+    fn unwatch_folder(&mut self, dir: &Path) -> notify::Result<()>;
+}
 
-    let mut targets = watch_targets(&yaml);
-    let (tx, rx) = mpsc::channel();
-    let mut watcher = notify::recommended_watcher(tx)
-        .map_err(|e| Error::Internal(format!("could not start file watching: {e}")))?;
-    watcher
-        .watch(&targets.yaml_dir, RecursiveMode::NonRecursive)
-        .map_err(|e| {
-            Error::Internal(format!(
-                "could not watch '{}': {e}",
-                targets.yaml_dir.display()
-            ))
-        })?;
-    let mut watched_template: Option<PathBuf> = None;
-    sync_template_watch(&mut watcher, &targets, &mut watched_template);
-
-    // The baseline snapshot is taken *before* each build: a save landing while a
-    // build is running wakes the next burst and is caught up (inner loop), so the
-    // PDF always converges to the newest content.
-    let mut before = snapshot(&targets);
-    build_once(&build_args, cli);
-
-    if !cli.quiet {
-        println!("watching {}, press Ctrl-C to stop", args.file.display());
+impl WatchFolders for RecommendedWatcher {
+    fn watch_folder(&mut self, dir: &Path, mode: RecursiveMode) -> notify::Result<()> {
+        self.watch(dir, mode)
     }
 
-    loop {
-        match wait_for_burst(&rx, DEBOUNCE_QUIET) {
+    fn unwatch_folder(&mut self, dir: &Path) -> notify::Result<()> {
+        self.unwatch(dir)
+    }
+}
+
+type WatcherHandle = Box<dyn WatchFolders>;
+
+/// The OS boundary of `cv watch`: turn an event sender into a watcher. `run` uses the
+/// platform backend; a test hands in one that refuses or one that drops its sender, so
+/// the refusal messages and the loop's exit are covered without a killed subprocess.
+type WatcherFactory = fn(Sender<notify::Result<notify::Event>>) -> notify::Result<WatcherHandle>;
+
+fn platform_watcher(tx: Sender<notify::Result<notify::Event>>) -> notify::Result<WatcherHandle> {
+    notify::recommended_watcher(tx).map(|watcher| Box::new(watcher) as WatcherHandle)
+}
+
+/// Watch one CV file until the process is stopped (Ctrl-C): build immediately, then on
+/// every change of the watched content (spec §3).
+pub fn run(args: &WatchArgs, cli: &Cli) -> Result<()> {
+    watch(args, cli, platform_watcher)
+}
+
+/// Start a session on the given watcher backend and run its loop.
+fn watch(args: &WatchArgs, cli: &Cli, make_watcher: WatcherFactory) -> Result<()> {
+    let mut session = Watch::start(args, cli, make_watcher)?;
+    session.run()
+}
+
+/// The live watch session: the OS watcher and its event channel, what to rebuild, the
+/// snapshot the last build consumed, and the template folder currently registered.
+struct Watch<'a> {
+    watcher: WatcherHandle,
+    rx: Receiver<notify::Result<notify::Event>>,
+    build_args: BuildArgs,
+    targets: WatchTargets,
+    before: Snapshot,
+    watched_template: Option<PathBuf>,
+    cli: &'a Cli,
+}
+
+impl<'a> Watch<'a> {
+    /// A session over an existing event channel, baseline snapshot included: the
+    /// snapshot is taken *before* the first build, so a save landing while a build
+    /// runs is caught up (spec §3, ADR-0029).
+    fn new(
+        watcher: WatcherHandle,
+        rx: Receiver<notify::Result<notify::Event>>,
+        build_args: BuildArgs,
+        targets: WatchTargets,
+        watched_template: Option<PathBuf>,
+        cli: &'a Cli,
+    ) -> Self {
+        let before = snapshot(&targets);
+        Self {
+            watcher,
+            rx,
+            build_args,
+            targets,
+            before,
+            watched_template,
+            cli,
+        }
+    }
+
+    /// Register the watcher, build once, and print the banner (spec §3: `cv watch`
+    /// starts from a current PDF).
+    fn start(args: &WatchArgs, cli: &'a Cli, make_watcher: WatcherFactory) -> Result<Self> {
+        let yaml = absolute_input(&args.file)?;
+        // One rebuild is exactly one `cv build` run with the watch defaults: the
+        // resolved output path is `<stem>.pdf` next to the input (spec §3).
+        let build_args = BuildArgs {
+            file: args.file.clone(),
+            output: None,
+            no_fit: false,
+        };
+        let targets = watch_targets(&yaml);
+        let (tx, rx) = mpsc::channel();
+        let mut watcher = make_watcher(tx)
+            .map_err(|e| Error::Internal(format!("could not start file watching: {e}")))?;
+        watch_folder(
+            watcher.as_mut(),
+            &targets.yaml_dir,
+            RecursiveMode::NonRecursive,
+        )?;
+        let mut watched_template = None;
+        sync_template_watch(watcher.as_mut(), &targets, &mut watched_template);
+
+        let session = Self::new(watcher, rx, build_args, targets, watched_template, cli);
+        build_once(&session.build_args, cli);
+        if !cli.quiet {
+            super::out_line(&format!(
+                "watching {}, press Ctrl-C to stop",
+                args.file.display()
+            ));
+        }
+        Ok(session)
+    }
+
+    /// The watch loop: one turn per burst until the event channel dies. Ctrl-C ends
+    /// the process; the disconnect is the only in-process exit (ADR-0029) — the
+    /// channel died while the watcher is still owned, a broken notify internal rather
+    /// than a user situation, so reporting beats silence.
+    fn run(&mut self) -> Result<()> {
+        loop {
+            self.turn(DEBOUNCE_QUIET)?;
+        }
+    }
+
+    /// Drain one burst and rebuild until the on-disk snapshot stops changing.
+    /// `quiet` is the debounce window; tests pass zero to skip the wait.
+    fn turn(&mut self, quiet: Duration) -> Result<()> {
+        match wait_for_burst(&self.rx, quiet) {
             Burst::Wake => {}
-            // The event channel died while the watcher is still owned — a broken
-            // notify internal, not a user situation; reporting beats silence.
             Burst::Disconnected => {
                 return Err(Error::Internal("file watcher stopped".to_owned()));
             }
         }
-
+        let cli = self.cli;
+        let Watch {
+            targets,
+            before,
+            watcher,
+            watched_template,
+            build_args,
+            ..
+        } = self;
         catch_up(
-            &mut targets,
-            &mut before,
-            &mut || build_once(&build_args, cli),
-            &mut |t| sync_template_watch(&mut watcher, t, &mut watched_template),
+            targets,
+            before,
+            &mut || build_once(build_args, cli),
+            &mut |t| sync_template_watch(watcher.as_mut(), t, watched_template),
         );
+        Ok(())
     }
+}
+
+/// Point a watcher at a folder, or name the folder that could not be watched.
+fn watch_folder(watcher: &mut dyn WatchFolders, dir: &Path, mode: RecursiveMode) -> Result<()> {
+    watcher
+        .watch_folder(dir, mode)
+        .map_err(|e| watch_registration_error(dir, &e))
+}
+
+/// The startup failure when the CV's directory cannot be watched: an OS watch-slot or
+/// permission fault, so the message names the directory (rule 16).
+fn watch_registration_error(dir: &Path, error: &notify::Error) -> Error {
+    Error::Internal(format!("could not watch '{}': {error}", dir.display()))
 }
 
 /// One wake's work: rebuild until the on-disk snapshot stops changing. A save
@@ -169,6 +267,7 @@ fn watch_targets(yaml: &Path) -> WatchTargets {
 
 /// Block for the first event, then drain the burst until `quiet` of silence. Only
 /// arrival times matter, never event content (see module docs).
+#[derive(Debug, PartialEq, Eq)]
 enum Burst {
     /// A burst was consumed; it is time to compare snapshots.
     Wake,
@@ -192,7 +291,7 @@ fn wait_for_burst(rx: &Receiver<notify::Result<notify::Event>>, quiet: Duration)
 /// not exist yet cannot be registered; it is picked up by the next sync (every burst
 /// calls this), and its creation itself bursts through the watched YAML directory.
 fn sync_template_watch(
-    watcher: &mut RecommendedWatcher,
+    watcher: &mut dyn WatchFolders,
     targets: &WatchTargets,
     watched: &mut Option<PathBuf>,
 ) {
@@ -207,20 +306,26 @@ fn sync_template_watch(
     if let Some(old) = watched.take() {
         // We only unwatch paths we registered; failure still means it is gone from
         // our books, and the next sync re-derives the truth from `desired`.
-        let _ = watcher.unwatch(&old);
+        let _ = watcher.unwatch_folder(&old);
     }
     if let Some(dir) = desired {
-        match watcher.watch(&dir, RecursiveMode::Recursive) {
+        match watcher.watch_folder(&dir, RecursiveMode::Recursive) {
             Ok(()) => *watched = Some(dir),
-            // Watch failing on a folder that passed `is_dir` is a race (removed
-            // in between) or an OS watch-limit fault; the build already states
-            // everything about the folder, and the next sync retries.
-            Err(e) => eprintln!(
-                "warning: could not watch template folder '{}': {e}; changes there are picked up on the next YAML save",
-                dir.display()
-            ),
+            // Watch failing on a folder that passed `is_dir` is a race (removed in
+            // between) or an OS watch-slot fault; the build already states everything
+            // about the folder, and the next sync retries (ADR-0029).
+            Err(error) => eprint!("{}", unwatchable_folder(&dir, &error)),
         }
     }
+}
+
+/// The warning for a custom template folder the OS would not let us watch (ADR-0029):
+/// loud enough to explain, not a reason to stop watching.
+fn unwatchable_folder(dir: &Path, error: &notify::Error) -> String {
+    format!(
+        "warning: could not watch template folder '{}': {error}; changes there are picked up on the next YAML save\n",
+        dir.display()
+    )
 }
 
 /// Content snapshot of the watched inputs: file → hash of its bytes, missing files
@@ -305,6 +410,170 @@ mod tests {
         mpsc::channel()
     }
 
+    /// A folder watch that records calls and can be made to refuse: the OS watch-slot
+    /// fault that no temp directory or real backend can be forced to produce.
+    struct TestFolders {
+        refuse: bool,
+        watched: Vec<PathBuf>,
+        unwatched: Vec<PathBuf>,
+    }
+
+    impl TestFolders {
+        /// Registration succeeds, and every call is recorded.
+        fn new() -> Self {
+            Self {
+                refuse: false,
+                watched: Vec::new(),
+                unwatched: Vec::new(),
+            }
+        }
+
+        /// Registration always fails: the OS ran out of watch slots.
+        fn refusing() -> Self {
+            Self {
+                refuse: true,
+                ..Self::new()
+            }
+        }
+    }
+
+    impl WatchFolders for TestFolders {
+        fn watch_folder(&mut self, dir: &Path, _mode: RecursiveMode) -> notify::Result<()> {
+            self.watched.push(dir.to_path_buf());
+            if self.refuse {
+                return Err(notify::Error::generic("inotify watch limit reached"));
+            }
+            Ok(())
+        }
+
+        fn unwatch_folder(&mut self, dir: &Path) -> notify::Result<()> {
+            self.unwatched.push(dir.to_path_buf());
+            Ok(())
+        }
+    }
+
+    /// A backend that refuses every folder: the watch-slot fault at startup.
+    fn refusing_backend(
+        _tx: Sender<notify::Result<notify::Event>>,
+    ) -> notify::Result<WatcherHandle> {
+        Ok(Box::new(TestFolders::refusing()))
+    }
+
+    /// A backend that cannot even be created.
+    fn broken_backend(_tx: Sender<notify::Result<notify::Event>>) -> notify::Result<WatcherHandle> {
+        Err(notify::Error::generic("too many open files"))
+    }
+
+    /// A working backend that drops the event sender: the loop's only exit, reached
+    /// without killing anything.
+    fn silent_backend(tx: Sender<notify::Result<notify::Event>>) -> notify::Result<WatcherHandle> {
+        drop(tx);
+        Ok(Box::new(TestFolders::new()))
+    }
+
+    /// A session whose event channel the test owns: `tx` injects the wakes and
+    /// dropping it ends the loop. The folder watch is the recording double, so no
+    /// filesystem timing is involved (rule 18).
+    fn session<'a>(
+        yaml: &Path,
+        cli: &'a Cli,
+    ) -> (mpsc::Sender<notify::Result<notify::Event>>, Watch<'a>) {
+        let (tx, rx) = mpsc::channel();
+        let watcher: WatcherHandle = Box::new(TestFolders::new());
+        let build_args = BuildArgs {
+            file: yaml.to_path_buf(),
+            output: None,
+            no_fit: false,
+        };
+        let targets = watch_targets(yaml);
+        (tx, Watch::new(watcher, rx, build_args, targets, None, cli))
+    }
+
+    fn quiet_cli() -> Cli {
+        Cli::try_parse_from(["cv", "--quiet", "watch"]).expect("cli parses")
+    }
+
+    #[test]
+    fn a_wake_rebuilds_only_after_a_content_change() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let yaml = temp_yaml(dir.path(), "schema: 1\ncv:\n  name: Wake A\n");
+        let cli = quiet_cli();
+        let (tx, mut watch) = session(&yaml, &cli);
+
+        tx.send(Ok(notify::Event::new(notify::EventKind::Any)))
+            .expect("send");
+        watch.turn(Duration::ZERO).expect("one turn");
+        assert!(
+            !dir.path().join("cv.pdf").exists(),
+            "an unchanged snapshot must not rebuild"
+        );
+
+        std::fs::write(&yaml, "schema: 1\ncv:\n  name: Wake B\n").expect("edit");
+        tx.send(Ok(notify::Event::new(notify::EventKind::Any)))
+            .expect("send");
+        watch.turn(Duration::ZERO).expect("one turn");
+        assert!(
+            dir.path().join("cv.pdf").exists(),
+            "a content change is rebuilt through the wake"
+        );
+    }
+
+    #[test]
+    fn the_watch_loop_ends_when_the_event_channel_dies() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let yaml = temp_yaml(dir.path(), "schema: 1\ncv:\n  name: Loop End\n");
+        let cli = quiet_cli();
+        let (tx, mut watch) = session(&yaml, &cli);
+        drop(tx);
+        let err = watch.run().expect_err("a dead channel must end the loop");
+        assert!(
+            err.to_string().contains("file watcher stopped"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn start_builds_once_and_prints_the_banner() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let yaml = temp_yaml(dir.path(), "schema: 1\ncv:\n  name: Startup Build\n");
+        let cli = Cli::try_parse_from(["cv", "watch"]).expect("cli parses");
+        let args = WatchArgs { file: yaml.clone() };
+        let watch = Watch::start(&args, &cli, platform_watcher).expect("the watch starts");
+        assert!(
+            dir.path().join("cv.pdf").exists(),
+            "`cv watch` starts from a current PDF (spec §3)"
+        );
+        drop(watch);
+    }
+
+    /// `--quiet` drops the progress banner but not the startup build (ADR-0012).
+    #[test]
+    fn a_quiet_start_builds_without_the_banner() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let yaml = temp_yaml(dir.path(), "schema: 1\ncv:\n  name: Quiet Start\n");
+        let args = WatchArgs { file: yaml };
+        let cli = quiet_cli();
+        let watch = Watch::start(&args, &cli, platform_watcher).expect("the watch starts");
+        assert!(
+            dir.path().join("cv.pdf").exists(),
+            "quiet still builds the current PDF once"
+        );
+        drop(watch);
+    }
+
+    #[test]
+    fn run_reports_a_missing_directory_before_watching_anything() {
+        let cli = quiet_cli();
+        let args = WatchArgs {
+            file: PathBuf::from("no-such-watch-dir/cv.yaml"),
+        };
+        let err = run(&args, &cli).expect_err("startup must fail");
+        assert!(
+            err.to_string().contains("no-such-watch-dir"),
+            "the error names the directory: {err}"
+        );
+    }
+
     #[test]
     fn wait_for_burst_counts_one_save_burst_as_a_single_wake() {
         // Zero quiet period, sender kept alive: the drain consumes all three queued
@@ -315,7 +584,7 @@ mod tests {
             tx.send(Ok(notify::Event::new(notify::EventKind::Any)))
                 .expect("send");
         }
-        assert!(matches!(wait_for_burst(&rx, Duration::ZERO), Burst::Wake));
+        assert_eq!(wait_for_burst(&rx, Duration::ZERO), Burst::Wake);
         // The burst was fully drained: nothing left for the next wake.
         assert!(rx.try_recv().is_err());
     }
@@ -324,10 +593,7 @@ mod tests {
     fn wait_for_burst_reports_a_disconnected_channel() {
         let (tx, rx) = events_channel();
         drop(tx);
-        assert!(matches!(
-            wait_for_burst(&rx, Duration::ZERO),
-            Burst::Disconnected
-        ));
+        assert_eq!(wait_for_burst(&rx, Duration::ZERO), Burst::Disconnected);
     }
 
     #[test]
@@ -338,10 +604,7 @@ mod tests {
         drop(tx);
         // The first event arrives, then the sender dies during the drain: still
         // a clean Disconnected, never a hang.
-        assert!(matches!(
-            wait_for_burst(&rx, Duration::ZERO),
-            Burst::Disconnected
-        ));
+        assert_eq!(wait_for_burst(&rx, Duration::ZERO), Burst::Disconnected);
     }
 
     #[test]
@@ -353,17 +616,29 @@ mod tests {
             template_dir: None,
         };
         let mut before = snapshot(&targets);
-        let mut builds = 0;
+        let builds = std::cell::Cell::new(0);
+        let resyncs = std::cell::Cell::new(0);
+        let mut build = || builds.set(builds.get() + 1);
+        let mut resync = |_: &WatchTargets| resyncs.set(resyncs.get() + 1);
 
         // Quiet disk: no build.
-        catch_up(&mut targets, &mut before, &mut || builds += 1, &mut |_| {});
-        assert_eq!(builds, 0, "nothing changed, nothing rebuilt");
+        catch_up(&mut targets, &mut before, &mut build, &mut resync);
+        assert_eq!(builds.get(), 0, "nothing changed, nothing rebuilt");
 
         std::fs::write(&targets.yaml, "schema: 1\ncv:\n  name: B\n").expect("edit");
-        catch_up(&mut targets, &mut before, &mut || builds += 1, &mut |_| {});
-        assert_eq!(builds, 1, "one change, one rebuild");
-        catch_up(&mut targets, &mut before, &mut || builds += 1, &mut |_| {});
-        assert_eq!(builds, 1, "caught up: no further rebuild without a change");
+        catch_up(&mut targets, &mut before, &mut build, &mut resync);
+        assert_eq!(builds.get(), 1, "one change, one rebuild");
+        catch_up(&mut targets, &mut before, &mut build, &mut resync);
+        assert_eq!(
+            builds.get(),
+            1,
+            "caught up: no further rebuild without a change"
+        );
+        assert_eq!(
+            resyncs.get(),
+            builds.get(),
+            "every rebuild re-checks the watch set, and nothing else does"
+        );
     }
 
     #[test]
@@ -435,12 +710,38 @@ mod tests {
         );
     }
 
+    /// A template-only edit rebuilds, and the YAML-level target re-derivation is
+    /// skipped: the reference cannot have moved if the file did not change.
+    #[test]
+    fn catch_up_rebuilds_a_template_change_without_re_deriving_the_targets() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir(dir.path().join("tpl")).expect("tpl dir");
+        std::fs::write(dir.path().join("tpl/template.typ"), "one").expect("write source");
+        let mut targets = WatchTargets {
+            yaml: temp_yaml(dir.path(), "schema: 1\ncv:\n  name: X\n"),
+            yaml_dir: dir.path().to_path_buf(),
+            template_dir: Some(dir.path().join("tpl")),
+        };
+        let mut before = snapshot(&targets);
+        std::fs::write(dir.path().join("tpl/template.typ"), "two").expect("edit template");
+
+        let mut builds = 0;
+        let mut resynced = None;
+        catch_up(&mut targets, &mut before, &mut || builds += 1, &mut |t| {
+            resynced = t.template_dir.clone()
+        });
+        assert_eq!(builds, 1, "a template edit is a rebuild");
+        assert_eq!(
+            resynced, targets.template_dir,
+            "an unchanged YAML keeps the targets it had"
+        );
+    }
+
     #[test]
     fn sync_template_watch_registers_existing_folders_and_moves_with_them() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let (tx, _rx) = mpsc::channel();
-        let mut watcher = notify::recommended_watcher(tx).expect("watcher starts");
-        let mut watched = None;
+        let mut folders = TestFolders::new();
+        let mut watched: Option<PathBuf> = None;
 
         // No custom template: nothing to register.
         let built_in = WatchTargets {
@@ -448,7 +749,7 @@ mod tests {
             yaml_dir: dir.path().to_path_buf(),
             template_dir: None,
         };
-        sync_template_watch(&mut watcher, &built_in, &mut watched);
+        sync_template_watch(&mut folders, &built_in, &mut watched);
         assert_eq!(watched, None);
 
         // Missing folder: not registered (its appearance wakes the loop later).
@@ -456,29 +757,80 @@ mod tests {
             template_dir: Some(dir.path().join("tpl")),
             ..built_in.clone()
         };
-        sync_template_watch(&mut watcher, &custom, &mut watched);
+        sync_template_watch(&mut folders, &custom, &mut watched);
         assert_eq!(
             watched, None,
             "a folder that does not exist yet stays unwatched"
         );
 
         std::fs::create_dir(dir.path().join("tpl")).expect("create tpl");
-        sync_template_watch(&mut watcher, &custom, &mut watched);
+        sync_template_watch(&mut folders, &custom, &mut watched);
         assert_eq!(watched.as_deref(), Some(dir.path().join("tpl").as_ref()));
 
         // A second sync with the same state is a no-op (no churn).
-        sync_template_watch(&mut watcher, &custom, &mut watched);
-        assert_eq!(watched.as_deref(), Some(dir.path().join("tpl").as_ref()));
+        let before = folders.watched.len();
+        sync_template_watch(&mut folders, &custom, &mut watched);
+        assert_eq!(
+            folders.watched.len(),
+            before,
+            "an unchanged reference must not re-register"
+        );
 
         // Moving the reference moves the registration; deleting it unregisters.
         std::fs::create_dir(dir.path().join("tpl2")).expect("create tpl2");
         custom.template_dir = Some(dir.path().join("tpl2"));
-        sync_template_watch(&mut watcher, &custom, &mut watched);
+        sync_template_watch(&mut folders, &custom, &mut watched);
         assert_eq!(watched.as_deref(), Some(dir.path().join("tpl2").as_ref()));
+        assert_eq!(
+            folders.unwatched,
+            [dir.path().join("tpl")],
+            "the folder the reference left is unregistered"
+        );
 
         custom.template_dir = None;
-        sync_template_watch(&mut watcher, &custom, &mut watched);
+        sync_template_watch(&mut folders, &custom, &mut watched);
         assert_eq!(watched, None);
+    }
+
+    #[test]
+    fn a_refused_backend_is_a_startup_failure_that_names_the_cause() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let yaml = temp_yaml(dir.path(), "schema: 1\ncv:\n  name: Broken Backend\n");
+        let args = WatchArgs { file: yaml };
+        let cli = quiet_cli();
+        let err = watch(&args, &cli, broken_backend).expect_err("no watcher, no watch");
+        assert!(
+            err.to_string().contains("too many open files")
+                && err.to_string().contains("could not start file watching"),
+            "the error explains the OS cause: {err}"
+        );
+    }
+
+    #[test]
+    fn a_refused_directory_watch_names_the_directory() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let yaml = temp_yaml(dir.path(), "schema: 1\ncv:\n  name: Refused Dir\n");
+        let args = WatchArgs { file: yaml };
+        let cli = quiet_cli();
+        let err = watch(&args, &cli, refusing_backend).expect_err("registration refused");
+        assert!(
+            err.to_string().contains(&dir.path().display().to_string())
+                && err.to_string().contains("inotify watch limit reached"),
+            "the error names the directory and the cause: {err}"
+        );
+    }
+
+    #[test]
+    fn the_loop_returns_when_the_backend_drops_the_channel() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let yaml = temp_yaml(dir.path(), "schema: 1\ncv:\n  name: Dead Channel\n");
+        let args = WatchArgs { file: yaml };
+        let cli = quiet_cli();
+        let err = watch(&args, &cli, silent_backend).expect_err("the loop must end");
+        assert!(
+            err.to_string().contains("file watcher stopped"),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -522,6 +874,77 @@ mod tests {
         // exactly the property the watch loop relies on.
         std::fs::write(&yaml, "schema: 1\ncv:\n  name: [unclosed\n").expect("break");
         build_once(&build_args, &cli);
+    }
+
+    /// The same registration dance on the platform backend: the trait methods that
+    /// production actually calls are exercised, not only the test double's.
+    #[test]
+    fn the_platform_backend_registers_and_moves_folder_watches() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (tx, _rx) = mpsc::channel();
+        let mut folders = platform_watcher(tx).expect("the platform watcher starts");
+        let built_in = WatchTargets {
+            yaml: dir.path().join("cv.yaml"),
+            yaml_dir: dir.path().to_path_buf(),
+            template_dir: None,
+        };
+        let mut watched: Option<PathBuf> = None;
+
+        std::fs::create_dir(dir.path().join("tpl")).expect("create tpl");
+        let custom = WatchTargets {
+            template_dir: Some(dir.path().join("tpl")),
+            ..built_in.clone()
+        };
+        sync_template_watch(folders.as_mut(), &custom, &mut watched);
+        assert_eq!(
+            watched.as_deref(),
+            Some(dir.path().join("tpl").as_ref()),
+            "the real backend accepts an existing folder"
+        );
+
+        // Moving the reference unregisters the old folder through the real backend.
+        let moved = WatchTargets {
+            template_dir: None,
+            ..custom
+        };
+        sync_template_watch(folders.as_mut(), &moved, &mut watched);
+        assert_eq!(watched, None, "the registration is released");
+    }
+
+    #[test]
+    fn a_refused_folder_watch_warns_and_leaves_it_unregistered() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir(dir.path().join("tpl")).expect("create tpl");
+        let stale = dir.path().join("other");
+        let targets = WatchTargets {
+            yaml: temp_yaml(dir.path(), "schema: 1\ncv:\n  name: X\n"),
+            yaml_dir: dir.path().to_path_buf(),
+            template_dir: Some(dir.path().join("tpl")),
+        };
+        let mut folders = TestFolders::refusing();
+        let mut watched = Some(stale.clone());
+        sync_template_watch(&mut folders, &targets, &mut watched);
+
+        assert_eq!(
+            folders.unwatched,
+            [stale],
+            "the old registration is dropped"
+        );
+        assert_eq!(
+            watched, None,
+            "a folder that could not be registered is not remembered as watched"
+        );
+
+        let warning = unwatchable_folder(
+            Path::new("./my-template"),
+            &notify::Error::generic("inotify watch limit reached"),
+        );
+        assert!(
+            warning.contains("./my-template")
+                && warning.contains("inotify watch limit reached")
+                && warning.contains("next YAML save"),
+            "the warning names the folder, the cause and the way out: {warning}"
+        );
     }
 
     #[test]

@@ -1,8 +1,8 @@
 //! `cv` library crate.
 //!
-//! The binary (`main.rs`) is a thin wrapper; tests and future milestones (fit loop,
-//! watch mode) use the library API directly. Exposing modules here also lets integration
-//! tests exercise parsing/rendering without shelling out to the binary.
+//! The binary (`main.rs`) is a thin wrapper over this API: integration tests and the
+//! commands themselves use the same entry points, so nothing has to shell out to the
+//! binary to render or validate a CV.
 
 pub mod cli;
 pub mod commands;

@@ -6,13 +6,12 @@ use crate::error::Result;
 use crate::templates;
 
 pub fn run() -> Result<()> {
-    // Every name in `builtin_names()` comes from the same embedded tree
-    // `load_builtin` reads, so a listed name always loads: the `?` arm is
-    // unreachable by construction (rule 21 invariant).
+    // Every name in `builtin_names()` names a folder in the same embedded tree
+    // `load_builtin` reads, so a listed name always loads (rule 14 invariant).
     let loaded: Vec<templates::Template> = templates::builtin_names()
         .iter()
-        .map(|name| templates::load_builtin(name))
-        .collect::<Result<_>>()?;
+        .map(|name| templates::load_builtin(name).expect("a listed built-in loads"))
+        .collect();
     let width = loaded
         .iter()
         .map(|t| t.name.chars().count())
@@ -20,12 +19,12 @@ pub fn run() -> Result<()> {
         .unwrap_or_default();
     // Essential output, like `cv fonts`: kept even under `--quiet` (ADR-0012/0021).
     for template in &loaded {
-        println!(
+        super::out_line(&format!(
             "{:<width$}  {}",
             template.name,
             template.description,
             width = width
-        );
+        ));
     }
     Ok(())
 }
