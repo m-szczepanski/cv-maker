@@ -4,6 +4,7 @@
 //! [`Design::default`].
 
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroU32;
 
 use crate::model::value::{Color, Length, LineHeight};
 
@@ -16,6 +17,10 @@ pub struct Design {
 
     /// Page size.
     pub page: Page,
+
+    /// Page count the build targets; the fit loop fills up to this many pages.
+    /// `NonZeroU32` makes `pages: 0` a parse error at the line.
+    pub pages: NonZeroU32,
 
     pub margins: Margins,
     pub fonts: Fonts,
@@ -37,6 +42,7 @@ impl Default for Design {
         Self {
             template: "compact".to_owned(),
             page: Page::A4,
+            pages: NonZeroU32::MIN,
             margins: Margins::default(),
             fonts: Fonts::default(),
             sizes: Sizes::default(),

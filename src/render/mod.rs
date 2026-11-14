@@ -48,9 +48,9 @@ pub struct RenderOutput {
     pub page_count: usize,
     /// Typst warnings (e.g. unknown font family). Empty when the compile was clean.
     pub warnings: Vec<String>,
-    /// Shaped text runs on pages beyond the first (0 for one page) — the
-    /// "about N lines" figure of the fit-overflow warning (spec §7 step 4,
-    /// ADR-0026). One run is one style span within a line, so lines mixing
+    /// Shaped text runs on pages beyond the target page count (0 when there are
+    /// none) — the "about N lines" figure of the fit-overflow warning (spec §7
+    /// step 4, ADR-0026). One run is one style span within a line, so lines mixing
     /// styles (Markdown tokens) count slightly high; it is an approximation
     /// offered only in human text, never a contract value.
     pub overflow_lines: usize,
@@ -90,9 +90,10 @@ impl Default for FitParams {
 }
 
 /// One-shot render (spec §9), used by tests. `cv build` compiles through
-/// [`Engine`] directly so the fit loop can reuse it across iterations.
+/// [`Engine`] directly so the fit loop can reuse it across iterations. The
+/// one-shot path targets one page (`design.pages`, default 1).
 pub fn render(req: &RenderRequest) -> std::result::Result<RenderOutput, RenderError> {
-    Engine::build(req).compile(FitParams::default())
+    Engine::build(req).compile(FitParams::default(), 1)
 }
 
 /// A built compiler environment: fonts and template sources loaded once, reused for every
@@ -145,8 +146,14 @@ impl Engine {
         Self { engine, options }
     }
 
-    /// Compile the document with the given fit scales (spec §9 interface).
-    pub fn compile(&self, fit: FitParams) -> std::result::Result<RenderOutput, RenderError> {
+    /// Compile the document with the given fit scales (spec §9 interface). Overflow
+    /// runs are counted on pages beyond `target_pages` — the "about N lines" figure
+    /// of the fit-overflow warning.
+    pub fn compile(
+        &self,
+        fit: FitParams,
+        target_pages: usize,
+    ) -> std::result::Result<RenderOutput, RenderError> {
         let warned = self
             .engine
             .compile_with_input("template.typ", fit_to_inputs(fit));
@@ -171,10 +178,10 @@ impl Engine {
             pdf,
             page_count,
             warnings,
-            overflow_lines: if page_count > 1 {
+            overflow_lines: if page_count > target_pages {
                 doc.pages()
                     .iter()
-                    .skip(1)
+                    .skip(target_pages)
                     .map(|page| count_text_runs(&page.frame))
                     .sum()
             } else {
@@ -297,6 +304,60 @@ mod tests {
             "Unspecified: missing main file!",
             "non-diagnostic errors render through their Display impl"
         );
+    }
+
+    /// The GDPR footer contract (ADR-0045), verified against real layout: a
+    /// `v(1fr)` before an unbreakable block pins that block to the bottom margin
+    /// of its page. This is the only place frames are reachable (spec §13.7).
+    #[test]
+    fn a_stretch_before_the_last_block_pins_it_to_the_page_bottom() {
+        let request = test_request(
+            "#set page(height: 20cm, width: 10cm, margin: (x: 2cm, y: 2cm))\n\
+             #line(length: 3cm, stroke: 1pt)\n\
+             #block(height: 4cm, breakable: false)[HEAD]\n\
+             #v(1fr)\n\
+             #block(breakable: false)[FOOTER]\n",
+        );
+        let engine = Engine::build(&request);
+        let warned = engine
+            .engine
+            .compile_with_input("template.typ", fit_to_inputs(FitParams::default()));
+        // `typst_pdf::pdf` pins the generic document type, exactly as in `compile`.
+        let doc = warned.output.expect("the template compiles");
+        typst_pdf::pdf(&doc, &engine.options).expect("the test document exports");
+        assert_eq!(doc.pages().len(), 1);
+
+        let frame = &doc.pages()[0].frame;
+        let content_bottom_pt = frame.height().to_pt() - typst::layout::Abs::cm(2.0).to_pt();
+        let bottom = max_text_bottom(frame).expect("the page has text");
+        assert!(
+            bottom <= content_bottom_pt + 1.0,
+            "nothing renders past the bottom margin: {bottom:.1} > {content_bottom_pt:.1}"
+        );
+        assert!(
+            bottom >= content_bottom_pt - 15.0,
+            "the footer sits flush at the bottom margin, not in flow ({bottom:.1} vs \
+             {content_bottom_pt:.1})"
+        );
+    }
+
+    /// Deepest text position on a frame, in pt, descending into group frames.
+    /// Horizontal text has no vertical extent (`TextItem::height` sums y-advances,
+    /// which are 0), so this is the baseline position; group children are relative
+    /// to the group's position, which lives in the item point.
+    fn max_text_bottom(frame: &typst::layout::Frame) -> Option<f64> {
+        frame
+            .items()
+            .filter_map(|(point, item)| {
+                let y = point.y.to_pt();
+                match item {
+                    typst::layout::FrameItem::Text(_) => Some(y),
+                    typst::layout::FrameItem::Group(group) => max_text_bottom(&group.frame)
+                        .map(|child| child + y + group.transform.ty.to_pt()),
+                    _ => None,
+                }
+            })
+            .reduce(f64::max)
     }
 
     fn test_request(main_source: &str) -> RenderRequest {

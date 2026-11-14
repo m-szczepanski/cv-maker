@@ -82,6 +82,58 @@ fn partial_design_fills_missing_fields_with_defaults() -> Result<()> {
 }
 
 #[test]
+fn pages_defaults_to_one_and_parses_a_larger_target() -> Result<()> {
+    let doc = Document::from_yaml_str("schema: 1\ncv:\n  name: Jane Doe\n")?;
+    assert_eq!(doc.design.pages.get(), 1, "default is a one-page CV");
+
+    let doc = Document::from_yaml_str("schema: 1\ncv:\n  name: Jane Doe\ndesign:\n  pages: 2\n")?;
+    assert_eq!(doc.design.pages.get(), 2);
+    Ok(())
+}
+
+#[test]
+fn gdpr_defaults_to_the_standard_consent_clause() -> Result<()> {
+    let doc = Document::from_yaml_str("schema: 1\ncv:\n  name: Jane Doe\n")?;
+    assert_eq!(
+        doc.cv.gdpr.as_deref(),
+        Some(crate::model::content::DEFAULT_GDPR),
+        "a German-application CV gets the standard clause without asking for it"
+    );
+    Ok(())
+}
+
+#[test]
+fn gdpr_keeps_the_given_text_literally() -> Result<()> {
+    let doc = Document::from_yaml_str(
+        "schema: 1\ncv:\n  name: Jane Doe\n  gdpr: \"I consent to the processing of my data\"\n",
+    )?;
+    assert_eq!(
+        doc.cv.gdpr.as_deref(),
+        Some("I consent to the processing of my data"),
+        "the user's own legal wording, no Markdown processing"
+    );
+    Ok(())
+}
+
+#[test]
+fn gdpr_null_opts_out_of_the_default_clause() -> Result<()> {
+    let doc = Document::from_yaml_str("schema: 1\ncv:\n  name: Jane Doe\n  gdpr: null\n")?;
+    assert_eq!(doc.cv.gdpr, None, "an explicit null removes the footer");
+    Ok(())
+}
+
+#[test]
+fn pages_zero_is_rejected() {
+    let yaml = "schema: 1\ncv:\n  name: Jane Doe\ndesign:\n  pages: 0\n";
+    let err = Document::from_yaml_str(yaml).expect_err("zero pages must fail");
+    let msg = err.to_string().to_lowercase();
+    assert!(
+        msg.contains("pages") && (msg.contains("nonzero") || msg.contains("zero")),
+        "the error must name pages and the zero problem, got: {err}"
+    );
+}
+
+#[test]
 fn unknown_top_level_key_is_rejected() {
     let yaml = "schema: 1\ncv:\n  name: Jane Doe\nsurprise: true\n";
     let err = Document::from_yaml_str(yaml).expect_err("unknown key must fail");

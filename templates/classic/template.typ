@@ -5,7 +5,7 @@
 // (fit-loop scale factors). Pure Typst; no network, no file system access.
 //
 // Sizes/spacings/margins are multiplied by the fit scales exactly as in `compact`, so
-// the one-page fitting loop (spec §7) drives both templates through one contract.
+// the fitting loop (spec §7) drives both templates through one contract.
 
 #let data = yaml("data.yaml")
 #let cv = data.cv
@@ -67,10 +67,10 @@
 #show raw: set text(font: design.fonts.mono)
 
 // Section heading: title-case, bold, accent-colored; the gap below is the only
-// separation now that the old divider rule is gone (ADR-0030).
-#let section-heading(title) = block(spacing: 0pt, breakable: false)[
+// separation now that the old divider rule is gone (ADR-0030). Sticky (ADR-0044):
+// when its section's body flows to the next page, the heading moves with it.
+#let section-heading(title) = block(spacing: section-gap, breakable: false, sticky: true)[
   #text(size: heading-size, weight: "bold", fill: accent, font: design.fonts.heading)[#title]
-  #v(0.45em)
 ]
 
 // One entries item: heading left, dates right; org and location on the second line.
@@ -95,6 +95,46 @@
     #if second-line.len() > 0 [#v(-0.1em) #text(size: small-size)[#second-line.join()]]
     #if bullets != none [#v(0.25em) #bullets]
   ]
+}
+
+// Sections stay whole on a page (ADR-0046): a section whose measured height fits
+// the content area is wrapped in an unbreakable block, so Typst moves it whole to
+// the next page instead of cutting it mid-list. `measure` is contextual: the page
+// and margins above are its inputs. A section taller than the content area must
+// flow (an unbreakable block that cannot fit a page is broken anyway — verified
+// against the pinned Typst), and the sticky heading keeps it off a page bottom.
+#let content-width = page-width - 2 * margin-x
+#let content-height = page-height - 2 * margin-y
+#let section-block(inner) = context {
+  let height = measure(inner, width: content-width).height
+  if height <= content-height {
+    block(spacing: section-gap, breakable: false)[#inner]
+  } else {
+    inner
+  }
+}
+
+// One section: heading, then the body for its type — as content, so
+// `section-block` can measure it and keep it whole when it fits a page.
+#let section-content(section) = {
+  let body = if section.type == "entries" {
+    for item in section.items { entry(item) }
+  } else if section.type == "key_values" {
+    for item in section.items {
+      grid(
+        columns: (auto, 1fr),
+        align: (left, left),
+        column-gutter: 0.8em,
+        text(weight: "bold", font: design.fonts.heading)[#item.key],
+        text(size: body-size)[#item.value],
+      )
+    }
+  } else if section.type == "bullets" {
+    list(..section.items.map(inline), spacing: entry-gap * 0.6, tight: true)
+  } else if section.type == "text" {
+    for paragraph in section.items { par[#inline(paragraph)] }
+  }
+  section-heading(section.title) + v(0.45em) + body
 }
 
 // ---- Header ----------------------------------------------------------------------
@@ -141,27 +181,22 @@
 
 // ---- Sections --------------------------------------------------------------------
 
-#for section in cv.sections [
-  #block(spacing: section-gap, breakable: false)[
-    #section-heading(section.title)
-    #{
-      if section.type == "entries" {
-        for item in section.items { entry(item) }
-      } else if section.type == "key_values" {
-        for item in section.items {
-          grid(
-            columns: (auto, 1fr),
-            align: (left, left),
-            column-gutter: 0.8em,
-            text(weight: "bold", font: design.fonts.heading)[#item.key],
-            text(size: body-size)[#item.value],
-          )
-        }
-      } else if section.type == "bullets" {
-        list(..section.items.map(inline), spacing: entry-gap * 0.6, tight: true)
-      } else if section.type == "text" {
-        for paragraph in section.items { par[#inline(paragraph)] }
-      }
-    }
+// Sections that fit on one page are kept whole (ADR-0046): `section-block` wraps
+// them in an unbreakable block, so Typst moves the entire section to the next
+// page instead of cutting it mid-list. A section taller than a page flows, with
+// its sticky heading glued to the first entry.
+#{
+  for section in cv.sections {
+    section-block(section-content(section))
+  }
+}
+
+// GDPR consent statement (ADR-0045): the user's own legal wording, always literal
+// text, pinned to the bottom of the last page by the stretchable space above it.
+#if cv.gdpr != none [
+  #v(0.9em)
+  #v(1fr)
+  #block(spacing: 0pt, breakable: false)[
+    #text(size: small-size, fill: muted)[#cv.gdpr]
   ]
 ]

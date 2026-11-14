@@ -58,6 +58,7 @@ cv:
 design:
   template: compact
   page: a4
+  pages: 1
   margins: { x: 1.5cm, y: 1.2cm }
   fonts:
     body: Inter

@@ -1,6 +1,7 @@
 # cv — your CV as code, one page as PDF
 
-`cv` keeps a CV in one plain-text YAML file and renders a clean, one-page PDF from it.
+`cv` keeps a CV in one plain-text YAML file and renders a clean, one-page PDF from it —
+or a two-page one, if that is what you ask for (see [Fitting](#fitting-to-your-page-count)).
 No web app, no account, no upload: one binary that you can put in a repo next to the
 source, diff, and rebuild in a second.
 
@@ -17,10 +18,15 @@ cv.pdf  1 page  fit: scale 1.00  (218 ms)
 
 **What you get**
 
-- **Guaranteed one page.** If your content does not fit, `cv` quietly tightens spacing
-  and type until it does, and tells you what it applied.
+- **Guaranteed fit.** If your content does not fit one page, `cv` quietly tightens
+  spacing and type until it does — or until it fits the page count you set, filling
+  those pages instead of leaving a fragment on the last one — and tells you what it
+  applied.
 - **Everything in the file.** Fonts, margins, sizes, spacing, colours and the template
   live in a `design:` block in the same YAML — no separate theme files.
+- **The GDPR clause, included.** A standard consent statement at the bottom of the last
+  page, the way Polish and EU applications expect it — your own wording or none at all
+  with one line of YAML (see [GDPR](#gdpr-consent-clause)).
 - **Text you can select and copy.** Real text, not an image: selectable, searchable,
   with a tagged structure tree and embedded fonts, so it reads the same on any machine.
 - **Deterministic.** The same file and the same version of `cv` produce byte-identical
@@ -183,17 +189,32 @@ Global:
 
 ---
 
-## Making it fit on one page
+## Fitting to your page count
 
-One page is the point. When the first render is too long, `cv` tightens spacing and
-margins first, then reduces type size, and stops at the first setting that fits — so
-your CV uses the largest, roomiest layout it can.
+One page is the default, and it is a target, not a ceiling you work around: when the
+first render is too long, `cv` tightens spacing and margins first, then reduces type
+size, and stops at the first setting that fits — so your CV uses the largest, roomiest
+layout it can. If you want a longer CV, set the target and the same loop works toward
+it, only tightening when the content exceeds *both* pages:
 
-The last line of `cv build` says what happened:
+```yaml
+design:
+  pages: 2                # the page count to fit into; default 1
+```
+
+A two-page target is a promise the pages get *used*, not just allowed for: when the
+content already fits, `cv` grows the layout instead of leaving page 2 with two lines on
+it — spacing first, then type size, then margins, each only as far as it can go while
+the document still fits (so a sparse CV grows into two full pages rather than
+stranding a fragment). A section that fits on one page is never split across two:
+it moves whole to the next page. You can see what the loop did in the last line of
+`cv build`:
 
 ```
-cv.pdf  1 page  fit: scale 1.00  (218 ms)                        # already fit
-cv.pdf  1 page  fit: scale 0.94 spacing 0.71 margins 0.86  (262 ms)  # tightened to fit
+cv.pdf  1 page  fit: scale 1.00  (218 ms)                             # already fit
+cv.pdf  1 page  fit: scale 0.94 spacing 0.71 margins 0.86  (262 ms)   # tightened to fit
+cv.pdf  2 pages  fit: scale 1.00  (231 ms)                            # fills its 2-page target as written
+cv.pdf  2 pages  fit: scale 1.22 spacing 3.00 margins 1.00  (240 ms)  # grew to fill its 2-page target
 ```
 
 You control how far it may go:
@@ -207,13 +228,45 @@ design:
 ```
 
 If even the smallest allowed layout does not fit, you still get the PDF, plus a warning
-saying how much spilled and what to cut — and `cv` still exits 0, because you asked for
-a document and got one:
+saying how much spilled past your `pages` target and what to change — and `cv` still
+exits 0, because you asked for a document and got one:
 
 ```
-⚠ content still overflows at the fit floor: about 14 lines spill onto 2 extra page(s);
-  cut content (e.g. bullets or paragraphs) or relax design.fit_floor / margins
+⚠ content still overflows at the fit floor: about 14 lines spill onto 1 extra page(s);
+  cut content (e.g. bullets or paragraphs), raise design.pages, or relax
+  design.fit_floor / margins
 ```
+
+---
+
+## GDPR consent clause
+
+Applications for jobs in Poland — and more generally in the EU — expect a consent
+statement at the bottom of the CV, so `cv` writes the standard one for you:
+
+> I hereby give consent for my personal data included in my application to be processed
+> for the purposes of the recruitment process in accordance with Regulation (EU)
+> 2016/679 of the European Parliament and of the Council of 27 April 2016 (GDPR).
+
+It renders as small muted text pinned to the bottom of the **last page** (the only page,
+for a one-page CV). To use your own wording, set `cv.gdpr` — it is literal text, never
+formatted:
+
+```yaml
+cv:
+  gdpr: I agree that my personal data may be stored and processed for the purpose of
+    this application.
+```
+
+and to leave it off entirely:
+
+```yaml
+cv:
+  gdpr: null
+```
+
+The clause counts as page content: the fitting loop sees it, so a full page tightens a
+little rather than pushing the statement onto a page of its own.
 
 ---
 

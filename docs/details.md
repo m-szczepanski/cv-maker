@@ -1,4 +1,4 @@
-# SPEC: `cv`, a code-first YAML to one-page PDF CV tool
+# SPEC: `cv`, a code-first YAML to PDF CV tool (one page by default)
 
 Audience: coding agents implementing this project, and the human reviewer.
 Status: v0.1 draft. This file is the source of truth. If code and spec disagree, fix one of them in the same change and say which.
@@ -9,7 +9,7 @@ Status: v0.1 draft. This file is the source of truth. If code and spec disagree,
 
 Build a small, fast command-line tool for technical people who want to maintain their CV as code.
 
-The user writes a single YAML file containing both **content** and **design settings**. The tool validates it and renders a clean **one-page PDF** next to the YAML file.
+The user writes a single YAML file containing both **content** and **design settings**. The tool validates it and renders a clean **PDF** next to the YAML file — one page by default, `design.pages` pages when the user raises the target.
 
 ### Target user flow
 
@@ -26,7 +26,8 @@ cv build             # reads cv.yaml, writes cv.pdf in the same directory
 - Single static binary with templates and fonts embedded. Nothing else to install.
 - Per-CV design configuration (fonts, sizes, margins, colors) in a separate `design` section of the same file.
 - Template support: built-in templates plus user-supplied ones.
-- Guaranteed one-page output (auto-fit) with clear warnings when impossible.
+- Guaranteed fit within the target page count (auto-fit; one page by default, configurable with `design.pages`) with clear warnings when impossible.
+- Guaranteed fill: when content fits the target with room to spare, the loop grows the layout so the pages are used, and a section that fits one page is never split across two (ADR-0044, ADR-0046).
 - Great error messages: line-numbered, actionable.
 - Real selectable text in PDFs, correct reading order, ATS-friendly.
 - Deterministic: the same YAML and the same tool version produce the same PDF on every machine.
@@ -34,7 +35,11 @@ cv build             # reads cv.yaml, writes cv.pdf in the same directory
 ### Non-goals (for v1)
 
 - No web UI, playground, or server.
-- No multi-page CVs. One page is the product.
+- No free-flowing document length. The page count is set once in `design.pages`
+  (default 1) and the fit loop works toward exactly that target; content beyond
+  it overflows with a warning rather than growing the document silently.
+  (Revised after v1: the original non-goal said "no multi-page CVs" — `design.pages`
+  makes the count a deliberate user choice instead of a hard one-page limit.)
 - No GUI template editor.
 - No cloud features, accounts, or telemetry.
 - No Markdown/HTML/DOCX output. PDF only.
@@ -42,7 +47,7 @@ cv build             # reads cv.yaml, writes cv.pdf in the same directory
 
 ### Prior art (read, do not copy blindly)
 
-RenderCV (YAML to Typst to PDF) exists. This project differs by: single Rust binary, first-class one-page auto-fit, simple single-folder templates, and a schema generated from Rust types.
+RenderCV (YAML to Typst to PDF) exists. This project differs by: single Rust binary, first-class auto-fit to a chosen page count (one page by default), simple single-folder templates, and a schema generated from Rust types.
 
 ---
 
@@ -90,7 +95,7 @@ Binary name: `cv`.
 
 Global flags: `--font-path <dir>` (repeatable), `--quiet`, `--verbose`.
 
-`cv build` flags: `--output <path>` overrides the output location, `--no-fit` disables the one-page fitting loop for this run.
+`cv build` flags: `--output <path>` overrides the output location, `--no-fit` disables the fitting loop for this run.
 
 ### Output rules
 
@@ -134,6 +139,10 @@ cv:
   summary: >
     Backend engineer focused on high-throughput systems and developer tooling.
 
+  gdpr: >-
+    I agree that my personal data may be stored and processed for the purpose
+    of this application.     # optional; the default is the standard consent clause, `null` removes the footer
+
   sections:
     - title: Experience
       type: entries
@@ -160,6 +169,7 @@ cv:
 design:
   template: compact
   page: a4                 # a4 | letter
+  pages: 1                 # target page count; raise for a longer CV
   margins: { x: 1.5cm, y: 1.2cm }
   fonts:
     body: Inter
@@ -191,11 +201,12 @@ design:
 - The set of section types is part of the schema contract and is closed in v1. Templates must support all of them.
 - Bullet and text fields support a **small inline Markdown subset**: `**bold**`, `*italic*`, `` `code` ``, and `[label](url)`. Anything else is literal text. Conversion to Typst must escape all Typst-special characters in user text. User text must never be able to inject Typst code.
 - Dates are free-form strings.
+- `cv.gdpr` (ADR-0045) carries the consent statement, always literal text (no Markdown), the user's own wording. It defaults to the standard recruitment-consent clause (`DEFAULT_GDPR`); `gdpr: null` opts out. Built-in templates render it small and muted at the bottom of the last page; custom templates decide for themselves (`data.yaml` always carries the value, `null` when opted out).
 - Unknown keys are an error (`deny_unknown_fields`), with a "did you mean" hint where practical.
 
 ### Design defaults
 
-Every `design` field has a default defined in Rust. A missing `design` section is valid. Defaults must produce an attractive, fits-on-one-page-if-reasonable result with the default template.
+Every `design` field has a default defined in Rust. A missing `design` section is valid. Defaults must produce an attractive, fits-on-one-page-if-reasonable result with the default template. `pages` is a positive integer (`pages: 0` is a parse error at the value) and defaults to `1`.
 
 ---
 
@@ -251,29 +262,53 @@ templates/<name>/
    clean, minimal and slick, and hierarchy comes from type, color and spacing.
 3. (Optional) `sidebar`: narrow left column for skills and contact.
 
+Both built-ins follow two page-layout rules (ADR-0046, ADR-0045):
+
+- **A section that fits one page stays whole**: its height is measured against the
+  content area (Typst's `measure` inside `context`) and, when it fits, the section is
+  wrapped in an unbreakable block so Typst moves the whole section to the next page
+  instead of cutting a list in half. A section taller than a page must flow; its
+  heading is `sticky` so it never strands at a page bottom.
+- **`cv.gdpr` renders at the bottom of the last page**: stretchable space (`v(1fr)`)
+  above the statement pins it to the bottom margin — the last page of a multi-page
+  CV, the only page of a one-page CV.
+
 ### Custom templates
 
 `design.template` accepts either a built-in name or a relative path to a template folder (`./my-template`). Custom templates use the same contract. `cv watch` also watches the custom template folder.
 
 ---
 
-## 7. One-page fitting
+## 7. Fitting to the page count
 
-When `design.fit_one_page` is `true` (default) and the first compile produces more than one page:
+When `design.fit_one_page` is `true` (default) and the first compile produces more
+than `design.pages` pages (default 1):
 
 1. Tighten spacing in steps: `spacing.*` and margins down to a minimum (defaults: spacing scale 0.6, margins not below 1.0 cm).
 2. Then scale font sizes down in small steps (for example 0.02 per step) until it fits or the floor is reached (`fit_floor.min_body_size` or `min_scale`, whichever is stricter).
 3. Pick the **least aggressive** setting that fits. Prefer a binary search over a linear walk to limit compile count.
-4. If the content still does not fit at the floor: write the PDF anyway, exit code 0 or a distinct documented exit code (decide and document), and print a clear warning stating how many lines overflow and suggesting what to cut.
+4. If the content still does not fit at the floor: write the PDF anyway, exit code 0 or a distinct documented exit code (decide and document), and print a clear warning stating how many lines overflow — measured against the `design.pages` target — and suggesting what to change (cut content, raise `design.pages`, or relax `fit_floor` / margins).
+
+When the first compile already fits and the target is more than one page, the loop
+instead **fills** (ADR-0044): content spread thinly over the target's pages looks
+broken, so the loop grows — in bounded searches, each entered only when the previous
+one ended at its cap with the document still fitting — `spacing_scale`, then
+`font_scale`, then `margin_scale`, each to the largest value whose compile still fits
+within the target. The caps (spacing 3.0, font 1.25, margins 1.4) are sanity limits:
+content far below the target cannot fill it gracefully at any setting. A one-page
+target never fills: its layout stays the top-flow identity.
 
 Hard requirements:
 
-- The loop must have a maximum iteration count. No unbounded loops.
+- The loop must have a maximum iteration count. No unbounded loops. Worst case:
+  13 compiles on the tighten path, 19 on the fill path (the two are mutually exclusive).
 - Never go below the floor.
-- Never shrink if the first compile already fits.
+- Never shrink if the first compile already fits within `design.pages`.
 - The result is deterministic.
 - Fit scale factors are passed to the template through the `fit` object; templates multiply their own sizes and spacings by them.
-- The final output line reports the applied scale.
+- The final output line reports the applied scales.
+- The fit loop measures the whole document, `cv.gdpr` footer included: a full page
+  tightens rather than pushing the footer to a new page.
 
 ---
 
@@ -326,7 +361,7 @@ pub fn render(req: &RenderRequest) -> Result<RenderOutput, RenderError>;
 │   ├── validate/              # semantic checks, miette diagnostics
 │   ├── templates/             # loading built-in and custom templates
 │   ├── render/                # Typst integration (isolated)
-│   ├── fit.rs                 # one-page fitting loop
+│   ├── fit.rs                 # fitting loop to the target page count
 │   └── commands/              # init, build, watch, check, templates, schema, fonts
 └── tests/
     ├── build_examples.rs

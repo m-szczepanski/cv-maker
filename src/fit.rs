@@ -1,19 +1,31 @@
-//! One-page fitting loop (spec §7, plan 4.1–4.2; search shape in ADR-0024).
+//! Fitting loop to the target page count (spec §7, plan 4.1–4.2; search shape in
+//! ADR-0024).
 //!
 //! Strategy, in spec order:
 //!
-//! 1. Compile as-is. If it fits (one page), **never shrink** — the identity compile
-//!    doubles as the "t = 0 is infeasible" knowledge for the search.
+//! 1. Compile as-is. If it fits (within `design.pages` pages), **never shrink** — the
+//!    identity compile doubles as the "t = 0 is infeasible" knowledge for the search.
 //! 2. Phase A — tighten `spacing.*` and margins together along one linear "tightness"
 //!    `t`, floors: spacing scale 0.6, margins never below 1.0 cm.
 //! 3. Phase B — only if A's floors still overflow: shrink `font_scale` toward its
 //!    floor (`fit_floor.min_scale` and `min_body_size / sizes.body`, whichever is
 //!    stricter, i.e. the higher lower bound) at `t = 1`.
-//! 4. The searches are bounded bisections probing deterministic midpoints
-//!    (`MAX_PHASE_PROBES` each, plus one explicit floor probe), so they terminate by
-//!    construction, never cross a floor, and return the least aggressive *grid
-//!    point* that fits (monotonicity of "shrinks more ⇒ fits" is assumed; where
-//!    rounding breaks it locally the result still fits, see ADR-0024).
+//! 4. Phase F (fill, ADR-0044) — only when the identity compile already fits
+//!    and the target is more than one page: grow the scales that make the
+//!    pages fuller, one bounded search at a time, each entered only when the
+//!    previous one ended at its cap with the document still fitting —
+//!    `spacing_scale` (the vertical rhythm stretches), then `font_scale`
+//!    (text and leading grow), then `margin_scale` (the text area shrinks so
+//!    the same content fills it deeper, typography untouched). The caps
+//!    ([`FILL_MAX_SCALE`], [`FILL_MAX_FONT_SCALE`], [`FILL_MAX_MARGIN_SCALE`])
+//!    are sanity limits, not fill guarantees: content far below the target
+//!    cannot fill it gracefully at any setting.
+//! 5. The searches are bounded bisections probing deterministic midpoints
+//!    (`MAX_PHASE_PROBES` each, plus one explicit boundary probe), so they
+//!    terminate by construction, never cross a floor, and return the least
+//!    aggressive *grid point* that fits (monotonicity of "shrinks more ⇒ fits"
+//!    is assumed; where rounding breaks it locally the result still fits, see
+//!    ADR-0024).
 //!
 //! No Typst types here: the loop only sees page counts of [`RenderOutput`]s, the
 //! scales reach the template through the `fit` inputs (`src/render/`), and the
@@ -33,14 +45,26 @@ pub const MARGIN_FLOOR_PT: f64 = 72.0 / 2.54;
 
 /// Interior bisection probes per phase. 5 probes resolve the phase range to
 /// 1/32 ≈ 3.1 % (font scale: ≤ 0.5 % of its range, finer than the spec's 0.02
-/// example step). Worst-case compile count: `1 + (5 + 1) + (5 + 1) = 13`.
+/// example step). Worst-case compile count: `1 + 2 * (5 + 1) = 13` on the
+/// tighten path, `1 + 3 * (5 + 1) = 19` on the fill path (they are mutually
+/// exclusive).
 pub const MAX_PHASE_PROBES: usize = 5;
+
+/// Fill-phase caps (ADR-0044): growth stops here even if the pages are not
+/// full yet — stretched rhythm, oversized type, and shrunken text columns all
+/// read badly past these limits, and content far below the target cannot fill
+/// it gracefully at any setting.
+pub const FILL_MAX_SCALE: f64 = 3.0;
+pub const FILL_MAX_FONT_SCALE: f64 = 1.25;
+pub const FILL_MAX_MARGIN_SCALE: f64 = 1.4;
 
 /// Everything the loop needs from the (resolved) design block, precomputed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FitConfig {
     /// Run the loop at all (`design.fit_one_page`, overridable by `--no-fit`).
     pub enabled: bool,
+    /// Page count the document must fit within (`design.pages`).
+    pub target_pages: usize,
     /// Smallest `margin_scale` Phase A may use, so margins stay ≥ 1.0 cm.
     pub margin_min_scale: f64,
     /// Smallest `font_scale` Phase B may use.
@@ -52,6 +76,7 @@ impl FitConfig {
     pub fn from_design(design: &Design) -> Self {
         Self {
             enabled: design.fit_one_page,
+            target_pages: design.pages.get() as usize,
             margin_min_scale: margin_min_scale(&design.margins),
             font_floor: font_floor_scale(design),
         }
@@ -63,7 +88,9 @@ impl FitConfig {
 pub struct FitOutcome {
     pub output: RenderOutput,
     pub applied: FitParams,
-    /// Compiles performed — bounded by `1 + 2 * (MAX_PHASE_PROBES + 1)`.
+    /// Compiles performed — bounded by `1 + 2 * (MAX_PHASE_PROBES + 1)` on the
+    /// tighten path and `1 + MAX_PHASE_PROBES + 1` on the fill path; the two
+    /// are mutually exclusive.
     pub compiles: usize,
     /// Content still overflowed at every floor (spec §7 step 4; exit stays 0,
     /// ADR-0026).
@@ -102,7 +129,8 @@ fn font_floor_scale(design: &Design) -> f64 {
 /// Run the fitting loop against a prepared engine (fonts and sources stay loaded;
 /// plan 1.4.4). With `config.enabled == false` this is exactly one identity compile.
 pub fn fit(engine: &Engine, config: &FitConfig) -> std::result::Result<FitOutcome, RenderError> {
-    Session::new(config, |params| engine.compile(params)).run()
+    let target_pages = config.target_pages;
+    Session::new(config, |params| engine.compile(params, target_pages)).run()
 }
 
 /// Scale triple for a tightness `t` and font `font_scale` (ADR-0024): at `t = 0`
@@ -114,11 +142,6 @@ fn scales_at(margin_min_scale: f64, font_scale: f64, t: f64) -> FitParams {
         spacing_scale: 1.0 - t * (1.0 - SPACING_FLOOR),
         margin_scale: 1.0 - t * (1.0 - margin_min_scale),
     }
-}
-
-fn fits(output: &RenderOutput) -> bool {
-    // A paged document always has ≥ 1 page; `<= 1` only guards the impossible 0.
-    output.page_count <= 1
 }
 
 struct Session<'a> {
@@ -139,10 +162,25 @@ impl<'a> Session<'a> {
         }
     }
 
+    /// Does this compile stay within the target page count?
+    fn fits(&self, output: &RenderOutput) -> bool {
+        // A paged document always has ≥ 1 page; the comparison only also guards
+        // the impossible 0 against a target of 1.
+        output.page_count <= self.config.target_pages
+    }
+
     /// One compile at the mapped scales, counted for telemetry.
     fn call(&mut self, font_scale: f64, t: f64) -> std::result::Result<RenderOutput, RenderError> {
         self.compiles += 1;
         (self.compile)(scales_at(self.config.margin_min_scale, font_scale, t))
+    }
+
+    /// One compile at explicit scales, counted for telemetry (the fill phase
+    /// probes spacing scales above 1.0, which [`Self::call`]'s `t` mapping
+    /// cannot express).
+    fn call_params(&mut self, params: FitParams) -> std::result::Result<RenderOutput, RenderError> {
+        self.compiles += 1;
+        (self.compile)(params)
     }
 
     /// Compile split into `(fits, output)` for the searches.
@@ -152,7 +190,7 @@ impl<'a> Session<'a> {
         t: f64,
     ) -> std::result::Result<(bool, RenderOutput), RenderError> {
         let output = self.call(font_scale, t)?;
-        Ok((fits(&output), output))
+        Ok((self.fits(&output), output))
     }
 
     fn outcome(&self, output: RenderOutput, applied: FitParams, overflowed: bool) -> FitOutcome {
@@ -166,8 +204,16 @@ impl<'a> Session<'a> {
 
     fn run(&mut self) -> std::result::Result<FitOutcome, RenderError> {
         let identity = self.call(1.0, 0.0)?;
-        if !self.config.enabled || fits(&identity) {
-            // Hard requirement (spec §7): never shrink what already fits.
+        if !self.config.enabled {
+            return Ok(self.outcome(identity, FitParams::default(), false));
+        }
+        if self.fits(&identity) {
+            // Hard requirement (spec §7): never shrink what already fits. A
+            // multi-page target instead gets the fill phase (ADR-0044): grow
+            // spacing so the pages do not underfill.
+            if self.config.target_pages > 1 {
+                return self.fill(identity);
+            }
             return Ok(self.outcome(identity, FitParams::default(), false));
         }
 
@@ -194,13 +240,79 @@ impl<'a> Session<'a> {
             return Ok(self.outcome(at_floors, scales_at(margin_min, 1.0, 1.0), true));
         }
         if let Some((f, output)) =
-            search_max_feasible(floor, MAX_PHASE_PROBES, &mut |f| self.probe(f, 1.0))?
+            search_max_feasible(floor, 1.0, MAX_PHASE_PROBES, &mut |f| self.probe(f, 1.0))?
         {
             return Ok(self.outcome(output, scales_at(margin_min, f, 1.0), false));
         }
 
         let (fits_floor, at_floor) = self.probe(floor, 1.0)?;
         Ok(self.outcome(at_floor, scales_at(margin_min, floor, 1.0), !fits_floor))
+    }
+    /// Phase F (ADR-0044): the content fits within the target page count but
+    /// underfills it. Grow spacing, then fonts, then margins — each to the
+    /// largest scale whose compile still fits, each stage entered only when the
+    /// previous one ended at its cap (i.e. the pages can still take more). A
+    /// one-page CV never fills: its layout stays the top-flow identity.
+    fn fill(&mut self, identity: RenderOutput) -> std::result::Result<FitOutcome, RenderError> {
+        let (spacing_params, spacing_output, spacing_capped) =
+            self.grow_to_cap(FILL_MAX_SCALE, FitParams::default(), identity, &|p, s| {
+                FitParams {
+                    spacing_scale: s,
+                    ..p
+                }
+            })?;
+        if !spacing_capped {
+            return Ok(self.outcome(spacing_output, spacing_params, false));
+        }
+
+        let (font_params, font_output, font_capped) = self.grow_to_cap(
+            FILL_MAX_FONT_SCALE,
+            spacing_params,
+            spacing_output,
+            &|p, f| FitParams { font_scale: f, ..p },
+        )?;
+        if !font_capped {
+            return Ok(self.outcome(font_output, font_params, false));
+        }
+
+        let (margin_params, margin_output, _) =
+            self.grow_to_cap(FILL_MAX_MARGIN_SCALE, font_params, font_output, &|p, m| {
+                FitParams {
+                    margin_scale: m,
+                    ..p
+                }
+            })?;
+        Ok(self.outcome(margin_output, margin_params, false))
+    }
+
+    /// One fill-stage search: grow the scale `set` writes from 1.0 toward `cap`,
+    /// keeping the other params at `base`, to the largest value whose compile
+    /// still fits. Returns the adopted params, the output they produced, and
+    /// whether the cap itself fit — the caller's signal that slack remains for
+    /// the next stage. When no probed point fits, `base` stays (its output is
+    /// known-feasible: it either is the identity or just fit the previous cap).
+    fn grow_to_cap(
+        &mut self,
+        cap: f64,
+        base: FitParams,
+        base_output: RenderOutput,
+        set: &dyn Fn(FitParams, f64) -> FitParams,
+    ) -> std::result::Result<(FitParams, RenderOutput, bool), RenderError> {
+        let mut probe = |scale: f64| {
+            let output = self.call_params(set(base, scale))?;
+            Ok((self.fits(&output), output))
+        };
+        let grid_best = search_max_feasible(1.0, cap, MAX_PHASE_PROBES, &mut probe)?;
+        // The cap is the most generous setting the stage has: adopt it whenever
+        // it still fits, whether or not a grid point below it did.
+        let (fits_cap, at_cap) = probe(cap)?;
+        if fits_cap {
+            return Ok((set(base, cap), at_cap, true));
+        }
+        if let Some((scale, output)) = grid_best {
+            return Ok((set(base, scale), output, false));
+        }
+        Ok((base, base_output, false))
     }
 }
 
@@ -226,15 +338,17 @@ fn search_min_feasible(
     Ok(best)
 }
 
-/// Largest `f` in `(floor, 1)` that the probe accepts, at deterministic
-/// bisection midpoints. Assumes `f = 1` is infeasible; the caller probes the
-/// floor itself when this returns `None`.
+/// Largest point in `(lo, hi)` that the probe accepts, at deterministic
+/// bisection midpoints. The caller owns the boundary semantics: when this
+/// returns `None` it probes the edge the grid could not reach (the font floor
+/// in Phase B, the fill cap in Phase F).
 fn search_max_feasible(
-    floor: f64,
+    lo: f64,
+    hi: f64,
     max_probes: usize,
     probe: &mut dyn FnMut(f64) -> std::result::Result<(bool, RenderOutput), RenderError>,
 ) -> std::result::Result<Option<(f64, RenderOutput)>, RenderError> {
-    let (mut lo, mut hi) = (floor, 1.0_f64);
+    let (mut lo, mut hi) = (lo, hi);
     let mut best: Option<(f64, RenderOutput)> = None;
     for _ in 0..max_probes {
         let mid = (lo + hi) / 2.0;
@@ -366,6 +480,287 @@ mod tests {
     }
 
     // ---- loop guarantees (plan 4.2) ----
+
+    #[test]
+    fn a_two_page_target_fills_rather_than_shrinks_a_fitting_document() {
+        // The fake always compiles to two pages: the identity fits, so the fill
+        // phase runs every stage to its cap instead of ever shrinking.
+        let probes = Rc::new(RefCell::new(Vec::new()));
+        let config = FitConfig {
+            target_pages: 2,
+            ..default_config(true)
+        };
+        let outcome = session_growing_with_spacing(&config, |_| 2, probes.clone())
+            .run()
+            .expect("fake compile never fails");
+        assert_eq!(
+            outcome.applied,
+            FitParams {
+                font_scale: FILL_MAX_FONT_SCALE,
+                spacing_scale: FILL_MAX_SCALE,
+                margin_scale: FILL_MAX_MARGIN_SCALE,
+            },
+            "all three fill caps are adopted"
+        );
+        assert!(!outcome.overflowed);
+        assert_eq!(outcome.compiles, 1 + 3 * (MAX_PHASE_PROBES + 1));
+    }
+
+    #[test]
+    fn a_two_page_target_still_tightens_content_beyond_two_pages() {
+        // Fits (2 pages) only once spacing is tightened enough; otherwise 3 pages.
+        let config = FitConfig {
+            target_pages: 2,
+            ..default_config(true)
+        };
+        let outcome = Session::new(&config, |params| {
+            Ok(output(if params.spacing_scale <= 0.7 { 2 } else { 3 }))
+        })
+        .run()
+        .expect("fake compile never fails");
+        assert!(
+            outcome.applied.spacing_scale <= 0.7,
+            "the returned setting fits within 2 pages: {:?}",
+            outcome.applied
+        );
+        assert_eq!(outcome.compiles, 1 + MAX_PHASE_PROBES);
+        assert!(!outcome.overflowed);
+    }
+
+    // ---- fill phase (ADR-0044): a fitting multi-page document fills its pages ----
+
+    /// A compiler whose page count only grows with the spacing scale — the shape
+    /// of a sparse document the fill phase stretches into the target.
+    fn session_growing_with_spacing<'a>(
+        config: &'a FitConfig,
+        pages_at: impl Fn(f64) -> usize + 'a,
+        probes: Rc<RefCell<Vec<FitParams>>>,
+    ) -> Session<'a> {
+        Session::new(config, move |params| {
+            probes.borrow_mut().push(params);
+            Ok(output(pages_at(params.spacing_scale)))
+        })
+    }
+
+    #[test]
+    fn fill_grows_spacing_to_the_largest_fitting_scale() {
+        // Content that is two pages at scale 1.0, three pages past spacing 2.5:
+        // the largest fitting grid point is 2.5, and the cap (3.0) does not fit.
+        let probes = Rc::new(RefCell::new(Vec::new()));
+        let config = FitConfig {
+            target_pages: 2,
+            ..default_config(true)
+        };
+        let outcome =
+            session_growing_with_spacing(&config, |s| if s <= 2.5 { 2 } else { 3 }, probes.clone())
+                .run()
+                .expect("fake compile never fails");
+        assert!(
+            (outcome.applied.spacing_scale - 2.5).abs() < 1e-9,
+            "got {:?}",
+            outcome.applied
+        );
+        assert_eq!(outcome.applied.font_scale, 1.0, "fonts never grow");
+        assert_eq!(outcome.applied.margin_scale, 1.0, "margins never grow");
+        assert!(!outcome.overflowed);
+        assert_eq!(
+            outcome.compiles,
+            1 + MAX_PHASE_PROBES + 1,
+            "identity + fill grid + the cap probe"
+        );
+        assert!(
+            probes
+                .borrow()
+                .iter()
+                .all(|p| p.font_scale == 1.0 && p.margin_scale == 1.0),
+            "only spacing moves: {:?}",
+            probes.borrow()
+        );
+    }
+
+    #[test]
+    fn fill_adopts_the_cap_when_it_still_fits() {
+        // Content so sparse that even the spacing cap fits: the cap is adopted,
+        // and the still-slack pages pull in the font and margin stages too.
+        let probes = Rc::new(RefCell::new(Vec::new()));
+        let config = FitConfig {
+            target_pages: 2,
+            ..default_config(true)
+        };
+        let outcome = session_growing_with_spacing(
+            &config,
+            |s| if s <= FILL_MAX_SCALE { 1 } else { 3 },
+            probes.clone(),
+        )
+        .run()
+        .expect("fake compile never fails");
+        assert_eq!(
+            outcome.applied,
+            FitParams {
+                font_scale: FILL_MAX_FONT_SCALE,
+                spacing_scale: FILL_MAX_SCALE,
+                margin_scale: FILL_MAX_MARGIN_SCALE,
+            },
+            "got {:?}",
+            outcome.applied
+        );
+        assert_eq!(outcome.compiles, 1 + 3 * (MAX_PHASE_PROBES + 1));
+    }
+
+    #[test]
+    fn the_font_stage_grows_only_until_the_target_is_reached() {
+        // The spacing cap fits, but font growth past ~1.1 (with spacing at the
+        // cap) spills to a third page: the font stage stops at its boundary and
+        // the margin stage never runs.
+        let config = FitConfig {
+            target_pages: 2,
+            ..default_config(true)
+        };
+        let outcome = Session::new(&config, |p| {
+            let fits =
+                p.spacing_scale <= FILL_MAX_SCALE && p.font_scale <= 1.1 && p.margin_scale <= 1.0;
+            Ok(output(if fits { 2 } else { 3 }))
+        })
+        .run()
+        .expect("fake compile never fails");
+        assert!(
+            outcome.applied.font_scale > 1.0 && outcome.applied.font_scale < FILL_MAX_FONT_SCALE,
+            "font growth stops below its cap, got {:?}",
+            outcome.applied
+        );
+        assert_eq!(outcome.applied.spacing_scale, FILL_MAX_SCALE);
+        assert_eq!(outcome.applied.margin_scale, 1.0, "margins never move");
+        assert_eq!(outcome.compiles, 1 + 2 * (MAX_PHASE_PROBES + 1));
+    }
+
+    #[test]
+    fn the_margin_stage_fills_what_the_font_stage_left() {
+        // Everything fits until margin growth past ~1.2: the margin stage is
+        // the last one entered and stops at its own boundary.
+        let config = FitConfig {
+            target_pages: 2,
+            ..default_config(true)
+        };
+        let outcome = Session::new(&config, |p| {
+            let fits = p.spacing_scale <= FILL_MAX_SCALE
+                && p.font_scale <= FILL_MAX_FONT_SCALE
+                && p.margin_scale <= 1.2;
+            Ok(output(if fits { 2 } else { 3 }))
+        })
+        .run()
+        .expect("fake compile never fails");
+        assert!(
+            outcome.applied.margin_scale > 1.0
+                && outcome.applied.margin_scale < FILL_MAX_MARGIN_SCALE,
+            "margin growth stops below its cap, got {:?}",
+            outcome.applied
+        );
+        assert_eq!(outcome.applied.spacing_scale, FILL_MAX_SCALE);
+        assert_eq!(outcome.applied.font_scale, FILL_MAX_FONT_SCALE);
+        assert_eq!(outcome.compiles, 1 + 3 * (MAX_PHASE_PROBES + 1));
+    }
+
+    #[test]
+    fn fill_keeps_the_identity_when_no_growth_still_fits() {
+        // Content that fills the target exactly at the identity: any growth
+        // overflows, so the identity compile is the fill result.
+        let probes = Rc::new(RefCell::new(Vec::new()));
+        let config = FitConfig {
+            target_pages: 2,
+            ..default_config(true)
+        };
+        let outcome =
+            session_growing_with_spacing(&config, |s| if s <= 1.0 { 2 } else { 3 }, probes.clone())
+                .run()
+                .expect("fake compile never fails");
+        assert_eq!(outcome.applied, FitParams::default(), "no growth fits");
+        assert!(!outcome.overflowed);
+        assert_eq!(outcome.compiles, 1 + MAX_PHASE_PROBES + 1);
+    }
+
+    #[test]
+    fn a_disabled_loop_never_fills_even_for_a_multi_page_target() {
+        let probes = Rc::new(RefCell::new(Vec::new()));
+        let config = FitConfig {
+            enabled: false,
+            target_pages: 2,
+            ..default_config(false)
+        };
+        let outcome = session_growing_with_spacing(&config, |_| 2, probes.clone())
+            .run()
+            .expect("fake compile never fails");
+        assert_eq!(outcome.compiles, 1, "identity only");
+        assert_eq!(outcome.applied, FitParams::default());
+        assert!(!outcome.overflowed);
+    }
+
+    #[test]
+    fn the_fill_phase_is_deterministic() {
+        let run_once = || {
+            let probes = Rc::new(RefCell::new(Vec::new()));
+            let config = FitConfig {
+                target_pages: 2,
+                ..default_config(true)
+            };
+            let outcome = session_growing_with_spacing(
+                &config,
+                |s| if s <= 2.25 { 2 } else { 3 },
+                probes.clone(),
+            )
+            .run()
+            .expect("fake compile never fails");
+            (outcome.applied, outcome.compiles, probes.borrow().clone())
+        };
+        assert_eq!(
+            format!("{:?}", run_once()),
+            format!("{:?}", run_once()),
+            "determinism (spec §7 hard requirement)"
+        );
+    }
+
+    #[test]
+    fn a_compile_error_inside_the_fill_search_propagates() {
+        let config = FitConfig {
+            target_pages: 2,
+            ..default_config(true)
+        };
+        let mut session = Session::new(&config, |params| {
+            if params.spacing_scale > 1.0 {
+                Err(RenderError::Template {
+                    message: format!("boom at spacing {}", params.spacing_scale),
+                })
+            } else {
+                Ok(output(2))
+            }
+        });
+        let error = session
+            .run()
+            .expect_err("the first fill probe failure must escape");
+        assert!(error.to_string().contains("spacing 2"), "got: {error}");
+        assert_eq!(session.compiles, 2, "identity, then the first fill probe");
+    }
+
+    #[test]
+    fn a_compile_error_in_a_later_fill_stage_propagates() {
+        // Spacing grows fine; the font stage is where the template breaks.
+        let config = FitConfig {
+            target_pages: 2,
+            ..default_config(true)
+        };
+        let mut session = Session::new(&config, |params| {
+            if params.font_scale > 1.0 {
+                Err(RenderError::Template {
+                    message: format!("boom at font {}", params.font_scale),
+                })
+            } else {
+                Ok(output(2))
+            }
+        });
+        let error = session
+            .run()
+            .expect_err("the font-stage failure must escape");
+        assert!(error.to_string().contains("font 1.125"), "got: {error}");
+    }
 
     #[test]
     fn never_shrinks_a_document_that_fits_first_try() {
@@ -501,6 +896,7 @@ mod tests {
         let probes = Rc::new(RefCell::new(Vec::new()));
         let config = FitConfig {
             enabled: true,
+            target_pages: 1,
             margin_min_scale: 0.8,
             font_floor: 1.0,
         };
@@ -608,6 +1004,7 @@ mod tests {
     fn never_shrinkable() -> FitConfig {
         FitConfig {
             enabled: true,
+            target_pages: 1,
             margin_min_scale: 0.8,
             font_floor: 0.5,
         }
@@ -759,6 +1156,7 @@ mod tests {
     fn tight_config() -> FitConfig {
         FitConfig {
             enabled: true,
+            target_pages: 1,
             margin_min_scale: 0.8,
             font_floor: 0.5,
         }

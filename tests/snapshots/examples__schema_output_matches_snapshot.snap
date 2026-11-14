@@ -37,6 +37,7 @@ expression: schema
           "y": "1.2cm"
         },
         "page": "a4",
+        "pages": 1,
         "sizes": {
           "body": "9.5pt",
           "heading": "11pt",
@@ -137,6 +138,14 @@ expression: schema
           ],
           "default": null
         },
+        "gdpr": {
+          "description": "GDPR consent statement, rendered as small muted text at the bottom of the\nlast page. Literal text (no Markdown), the user's own wording. Defaults\nto [`DEFAULT_GDPR`]; `gdpr: null` opts out of the footer entirely\n(ADR-0045).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": "I hereby give consent for my personal data included in my application to be processed for the purposes of the recruitment process in accordance with Regulation (EU) 2016/679 of the European Parliament and of the Council of 27 April 2016 (GDPR)."
+        },
         "headline": {
           "description": "Short role statement under the name.",
           "type": [
@@ -230,6 +239,13 @@ expression: schema
           "description": "Page size.",
           "$ref": "#/$defs/Page",
           "default": "a4"
+        },
+        "pages": {
+          "description": "Page count the build targets; the fit loop fills up to this many pages.\n`NonZeroU32` makes `pages: 0` a parse error at the line.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 1,
+          "minimum": 1
         },
         "sizes": {
           "$ref": "#/$defs/Sizes",

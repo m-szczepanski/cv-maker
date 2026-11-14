@@ -783,6 +783,108 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
 - **Consequences:** No panic reachable from the shipped asset tree's shape; the cost is
   one never-taken error continuation in `cv templates`, which is the accepted trade over
   a crash (`.AGENTS.md` rule 21 prefers the typed report).
+
+## ADR-0043 — `design.pages`: the fit loop targets a user-chosen page count
+
+- **Context:** The spec's v1 non-goal said "no multi-page CVs. One page is the product."
+  After the release the project owner asked for the target to be configurable: default 1,
+  user-selectable otherwise. The fit loop (§7), the overflow warning, and the templates
+  all hard-coded the one-page assumption (`fits()` compared `page_count <= 1`, overflow
+  runs counted past page 1).
+- **Decision:** A new design field, `pages` (the owner picked the name over
+  `page_count`/`max_pages`; `design.page` remains the page *size*). It is a
+  `NonZeroU32` with default 1, so `pages: 0` is a parse error naming the field and the
+  line, and the derived JSON Schema carries `minimum: 1` — no hand-written validation.
+  The field is a *target*, not a quota: the fit loop (§7) tightens spacing, margins, and
+  fonts until the document fits within `pages` pages, with the same floors, the same
+  13-compile budget, and the same determinism as before; overflow is measured against
+  the target (`page_count - pages` extra pages), and the warning now suggests raising
+  `design.pages` alongside cutting content and relaxing `fit_floor`. There is no CLI
+  flag: `--no-fit` and `fit_one_page` remain the loop's opt-outs, and `pages` belongs to
+  the file like every other design field. Templates need no change — Typst paginates
+  naturally, and the field reaches them through `data.yaml` (`design.pages`) like the
+  other tool-level design values.
+- **Consequences:** The non-goal in spec §1 is revised rather than kept (recorded there);
+  `fit_one_page` keeps its name as the loop's on/off switch even when the target is not
+  one page. One template-behavior caveat surfaced during testing: a built-in template's
+  section block is unbreakable, so one enormous section lays out as an overflowing page
+  rather than splitting — multi-page CVs should use several sections; this is
+  pre-existing layout behavior, not part of this change. (Closed by ADR-0046: sections
+  are now kept whole when they fit a page and flow honestly when they do not.)
+## ADR-0044 — the fill phase: a fitting multi-page CV grows its scales until the pages are used
+
+- **Context:** `design.pages` (ADR-0043) lets a user ask for two pages, and the fit loop
+  guarantees the content *fits* — but "fits" and "fills" are different. A short CV with
+  a two-page target rendered as a full first page and two stranded lines on the second;
+  the owner asked for pages to be filled, ideally to the bottom margin, instead.
+- **Decision:** Phase F of the loop (spec §7). When the identity compile already fits
+  and the target is above one page, the loop runs bounded *growth* searches, each
+  entered only when the previous one ended at its cap with the document still fitting:
+  `spacing_scale` toward 3.0, then `font_scale` toward 1.25, then `margin_scale` toward
+  1.4 — margins last because growing them shrinks the text area, the only lever that
+  fills without touching typography at all. Each stage bisects its range like the
+  tighten phases do (deterministic midpoints, same probe count), so the fill path is
+  bounded at `1 + 3 * (MAX_PHASE_PROBES + 1) = 19` compiles, mutually exclusive with
+  the tighten path's 13. The caps are sanity limits, not fill guarantees: content far
+  below the target cannot fill two pages gracefully at any setting (a CV that needs 3×
+  rhythm and 25% larger type to reach page two was the wrong length to begin with — the
+  warning path already says what to do). A one-page target never fills: its layout is
+  the top-flow identity. The success line prints every scale that moved (`fit: scale
+  1.22 spacing 3.00 margins 1.00`), so a grown CV is visible.
+- **Consequences:** `fit_note` can no longer treat "scale ≥ 1.0" as "untouched" — it
+  compares against the identity exactly; the fill path is new, so every guard a tighten
+  test has (determinism, compile error propagation, floors) has a fill twin. Growing
+  fonts past the design size interacts with `fit_floor`, which floors *shrinking* only;
+  the caps are the growth-side equivalent, deliberately not user-configurable.
+
+## ADR-0045 — `cv.gdpr`: a consent statement at the bottom of the last page
+
+- **Context:** Applications in Poland (and EU hiring generally) expect a GDPR consent
+  clause at the foot of the CV. The owner asked for the standard clause rendered at the
+  bottom of the last page — the bottom of the only page for a one-page CV — and
+  provided the wording to ship as the default.
+- **Decision:** A content field, `cv.gdpr` (the owner picked `gdpr` over `privacy`/
+  `legal`): literal text — legal wording must never be Markdown-processed — typed by the
+  user, and *defaulted* to the standard recruitment clause (`DEFAULT_GDPR`), since the
+  footer is expected in the target market and absence would surprise more than presence;
+  `gdpr: null` opts out. The built-in templates render it small and muted after all
+  content, with `v(0.9em) #v(1fr)` above: the stretchable space pins it to the bottom
+  margin of whatever page the content ends on (verified against real frames in
+  `src/render` — `v(1fr)` collapses at a page break but fills a page's leftover, which
+  is exactly what anchoring needs). The statement is part of the document the fit loop
+  measures, so a page that is full tightens rather than pushing the footer onto a page
+  of its own. Custom templates get the value through `data.yaml` and decide for
+  themselves.
+- **Consequences:** Every CV built without `gdpr` now carries the clause — users
+  targeting markets where it is unexpected must write `gdpr: null`; that trade was made
+  deliberately, on the owner's request, and is stated in the README. `DEFAULT_GDPR` is
+  a legal string in the binary: changing wording is a content decision, not a refactor,
+  and it shifts the schema snapshot (schemars emits the default).
+
+## ADR-0046 — a section that fits one page is kept whole
+
+- **Context:** The fill phase (ADR-0044) needed sections to flow across pages to fill
+  them, and the first cut of ADR-0044 made built-in template sections breakable. The
+  owner rejected the result: a section cut in half at a page boundary is visibly broken
+  in a CV, whatever the fill statistics say. ADR-0043's caveat (one enormous section
+  lays out as an overflowing page) had to be resolved too, not just documented.
+- **Decision:** Both, decided per section at layout time by the template, not by the
+  tool: `measure` (Typst ≥ 0.15 scripting API, verified against the pinned 0.15.1) the
+  section's height against the content area; if it fits, wrap it in
+  `block(breakable: false)` so Typst moves the whole section to the next page; if it
+  does not fit one page, let it flow — the only alternative is content past the page
+  edge, which is worse. The heading stays `sticky` (ADR-0044) so a flowing section
+  never starts with the heading alone on the previous page. This closes the ADR-0043
+  caveat: an enormous section now splits honestly across pages instead of overflowing.
+- **Consequences:** Page fill can no longer be perfect in general — a whole-section
+  rule leaves a gap whenever the next section does not fit the remaining space, and the
+  fill phase closes it with rhythm, type, and margins up to their caps, which is the
+  best a document with unbreakable sections can do. The decision lives in the templates
+  (`section-block`), where the page geometry is known; the tool's fit loop still only
+  sees page counts. `measure` runs an extra layout pass per section per compile —
+  visible in build times (a multi-section two-page fit run went from ~3 s to ~6 s in
+  debug builds), accepted as the cost of correct pagination.
+
 ## Open questions (spec §14) — status
 
 All closed as of M6; each carries the ADR that resolved it.
