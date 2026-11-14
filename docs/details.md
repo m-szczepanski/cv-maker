@@ -98,6 +98,9 @@ Global flags: `--font-path <dir>` (repeatable), `--quiet`, `--verbose`.
 - Overwrite the PDF silently if it exists.
 - Write atomically (write to a temp file in the same directory, then rename) so a failed build never leaves a corrupt PDF.
 - Success output is one line, e.g. `cv.pdf  1 page  fit: scale 0.94  (118 ms)`.
+- Exit codes: `0` on success — including a build that wrote an overflowing PDF and
+  warned about it (§7 step 4, ADR-0026) — `1` on any error, `2` when the command line
+  itself is malformed (clap's convention, documented in the README).
 
 ---
 
