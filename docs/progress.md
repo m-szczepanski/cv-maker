@@ -211,9 +211,9 @@ unit-tested in `src/commands/watch.rs` (see its coverage note).
       on this machine, typical first-fit **198–201 ms** (232 ms cold), so the extra
       fidelity in the fit loop and the single-read refactor cost nothing measurable.
 
-Measured coverage (`cargo llvm-cov`, end of M6): **100.00% lines and 100.00% functions**
-(3930 lines, 544 functions; lines were 96.67% at the end of M5), 99.97% regions —
-`--show-missing-lines` reports nothing at all. The two regions still counted as missed
+Measured coverage (`cargo llvm-cov`, re-run against the committed M6 tree):
+**100.00% lines and 100.00% functions** (3936 lines, 545 functions; lines were 96.67%
+at the end of M5), 99.97% regions — `--show-missing-lines` reports nothing at all. The two regions still counted as missed
 are not untested code: one is the `?` continuation on `write_atomic`'s call into the
 write sink (`src/commands/build.rs:108`), where the disk fault is injected one level
 down instead (the `write_to` sink tests), and one is a numeric-literal sub-region inside
