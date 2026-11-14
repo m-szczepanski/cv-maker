@@ -14,7 +14,9 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-VERSION="$(cargo run --quiet -- --version | awk '{print $2}')"
+# The version comes from Cargo.toml, not from running the binary: the point of this
+# script is that it works where no Rust toolchain exists.
+VERSION="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
 ARCH="$(uname -m | sed 's/arm64/aarch64/')"
 OS="$(uname | tr 'A-Z' 'a-z' | sed 's/darwin/apple-darwin/;s/^linux$/linux-gnu/')"
 TRIPLE="$ARCH-$OS"

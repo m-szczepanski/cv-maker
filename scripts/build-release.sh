@@ -13,7 +13,9 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-VERSION="$(cargo run --quiet -- --version | awk '{print $2}')"
+# clap prints the version from Cargo.toml, so that file is the source of truth for the
+# artifact names — reading it avoids building the tool just to ask it its own version.
+VERSION="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
 DIST="dist"
 mkdir -p "$DIST"
 

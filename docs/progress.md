@@ -163,7 +163,8 @@ unit-tested in `src/commands/watch.rs` (see its coverage note).
       (reviewer's call), `dist/` is gitignored.
 - [x] 6.4 Fresh-machine test: `scripts/fresh-machine-test.sh` unpacks an archive, verifies
       its checksum, then runs the README quick start from the binary alone in an isolated
-      `HOME` with `PATH=/usr/bin:/bin` and no access to the repository: `templates`,
+      `HOME` with `PATH=/usr/bin:/bin` and no access to the repository (the harness
+      itself needs no Rust toolchain: it reads the version from `Cargo.toml`): `templates`,
       `init`, `check`, `build` → one-page PDF, byte-identical rebuild, starter schema
       written. Passes for the host triple (Apple silicon); the x86_64 and cross-OS
       artifacts are built and checksum-verified but only *structure-checked* here, since
