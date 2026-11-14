@@ -23,10 +23,14 @@ OS="$(uname | tr 'A-Z' 'a-z' | sed 's/darwin/apple-darwin/;s/^linux$/linux-gnu/'
 HOST="$ARCH-$OS"
 ARCHIVE="${1:-dist/cv-$VERSION-$HOST.tar.xz}"
 NAME="$(basename "$ARCHIVE")"
-# cv-0.1.0-aarch64-apple-darwin.tar.xz → aarch64-apple-darwin
-TRIPLE="${NAME#cv-"$VERSION"-}"
-TRIPLE="${TRIPLE%.tar.xz}"
-TRIPLE="${TRIPLE%.zip}"
+# cv-<version>-<triple>.tar.xz → <triple>. The version is dropped by position, not by
+# matching $VERSION, so an archive of another release is still classified correctly.
+REST="${NAME#cv-}"
+case "$REST" in
+  *.tar.xz) REST="${REST%.tar.xz}" ;;
+  *.zip) REST="${REST%.zip}" ;;
+esac
+TRIPLE="${REST#*-}"
 
 if [ ! -f "$ARCHIVE" ]; then
   echo "no archive at $ARCHIVE — run scripts/build-release.sh first" >&2
