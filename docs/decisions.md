@@ -634,11 +634,13 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   "unreachable". `WatchFolders` is the seam for the two notify operations, because a
   real backend only refuses a folder on OS watch slots.
 - **Consequences:** Measured coverage went from 96.67% lines at the end of M5 to
-  **100.00%** (functions 100.00%, regions 99.97%): every source line executes, and
-  `--show-missing-lines` reports nothing. The two regions still counted as missed are
+  **100.00%** (functions 100.00%, regions 99.95%): every source line executes, and
+  `--show-missing-lines` reports nothing. The three regions still counted as missed are
   accounting rather than untested behaviour: `write_atomic`'s `?` after the sink write
-  (the fault is injected at the seam, not by breaking the disk — its comment says so)
-  and a numeric-literal sub-region inside `fit.rs`'s floor guards, whose lines execute.
+  (the fault is injected at the seam, not by breaking the disk — its comment says so),
+  `cv templates`' `?` after collecting its built-ins (kept because a broken bundle should
+  be reported, not panicked — ADR-0042), and a numeric-literal sub-region inside
+  `fit.rs`'s floor guards, whose lines execute.
   Test code no longer uses `unwrap_or_else(|| panic!(…))` forms whose failure paths
   show up as uncovered either.
 

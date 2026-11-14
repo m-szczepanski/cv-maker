@@ -209,8 +209,9 @@ unit-tested in `src/commands/watch.rs` (see its coverage note).
       Stale milestone narration was removed from doc comments; `matches!`-style test
       assertions that could only ever show a dead branch were rewritten.
 - [x] 6.7 Build time re-measured after the M6 changes (M4 target < 500 ms): release build
-      on this machine, typical first-fit **198–201 ms** (232 ms cold), so the extra
-      fidelity in the fit loop and the single-read refactor cost nothing measurable.
+      on this machine, typical first-fit **145–201 ms** on a warm tree (232 ms cold), so
+      the extra fidelity in the fit loop and the single-read refactor cost nothing
+      measurable. Re-measured once more on the review-round artifacts.
 - [x] 6.8 Review round — eight findings from reading the branch back, each reproduced
       before being fixed and each with a test now:
       - **stderr panicked on a hung-up reader** (`cv check bad.yaml 2>&1 | head -1`,
@@ -239,20 +240,27 @@ unit-tested in `src/commands/watch.rs` (see its coverage note).
         the listing and `load_builtin`, so a non-template folder is simply not a known
         name — and a bundle that is a template but fails to load stays a typed internal
         error rather than a crash (ADR-0042).
+      - The harness's own version-prefix strip then misread an archive labelled with a
+        different version than the checkout, classifying it as an unknown triple; the
+        triple is parsed by position instead, checked against a renamed host artifact, a
+        Linux triple, a Windows `.zip` and a multi-digit version.
       - Three low-severity accuracy fixes: ADR cross-references that cited ADR-0034 for
         ADR-0033's work, a `to_yaml` invariant comment claiming all numbers are finite
         (they are not — nonsense fit floors serialize as `.nan` and are clamped by the
         fit loop), and README claims on link targets and on byte-identical output across
         machines (true for bundled and user-supplied fonts, not for system-resolved ones).
 
-Measured coverage (`cargo llvm-cov`, re-run against the committed M6 tree):
-**100.00% lines and 100.00% functions** (3936 lines, 545 functions; lines were 96.67%
-at the end of M5), 99.97% regions — `--show-missing-lines` reports nothing at all. The two regions still counted as missed
-are not untested code: one is the `?` continuation on `write_atomic`'s call into the
-write sink (`src/commands/build.rs:108`), where the disk fault is injected one level
-down instead (the `write_to` sink tests), and one is a numeric-literal sub-region inside
-`fit.rs`'s floor guards, whose lines execute (`80|1`, `97|1`) and whose behaviour is
-asserted by `margins_already_below_the_floor_are_never_shrunk` and
+Measured coverage (`cargo llvm-cov`, re-run against the committed M6 tree after the
+review round): **100.00% lines and 100.00% functions** (4028 lines, 555 functions; lines
+were 96.67% at the end of M5), 99.95% regions — `--show-missing-lines` reports nothing at
+all. The three regions still counted as missed are not untested code: the `?`
+continuation on `write_atomic`'s call into the write sink (`src/commands/build.rs:108`),
+where the disk fault is injected one level down instead (the `write_to` sink tests); the
+`?` on `cv templates`' collect (`src/commands/templates.rs:15`), which is the price of
+reporting a broken bundle as a typed error instead of panicking (ADR-0042); and a
+numeric-literal sub-region inside `fit.rs`'s floor guards, whose lines execute (`80|1`,
+`97|1`) and whose behaviour is asserted by
+`margins_already_below_the_floor_are_never_shrunk` and
 `a_zero_body_size_floors_the_font_phase_at_the_original_scale`.
 
 Everything previously parked as "defensive branch, cannot reach" is now covered by a
