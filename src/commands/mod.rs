@@ -61,14 +61,17 @@ pub fn load_cv(file: &Path, font_paths: &[PathBuf]) -> Result<LoadedCv> {
     for rel in &document.design.font_paths {
         font_dirs.push(resolve_relative(file, rel));
     }
-    let font_items = crate::render::fonts::collect_font_dir_files(&font_dirs)?;
 
     let base_dir = file.parent().unwrap_or(Path::new("."));
-    match crate::validate::validate(&yaml, &name, &document, &font_items, base_dir) {
+    match crate::validate::validate(&yaml, &name, &document, &font_dirs, base_dir) {
         Outcome::Invalid(errors) => Err(Error::Input {
             diagnostics: errors,
         }),
-        Outcome::Valid { template, warnings } => Ok(LoadedCv {
+        Outcome::Valid {
+            template,
+            font_items,
+            warnings,
+        } => Ok(LoadedCv {
             yaml,
             document,
             template,
@@ -88,17 +91,26 @@ pub fn out_line(text: &str) {
     let _ = writeln!(std::io::stdout(), "{text}");
 }
 
-/// The same for stderr: diagnostics must not panic when the reader hung up.
+/// One line to stderr, best-effort for the same reason as [`out_line`].
 pub fn err_line(text: &str) {
     use std::io::Write;
     let _ = writeln!(std::io::stderr(), "{text}");
+}
+
+/// A pre-formatted diagnostic to stderr, best-effort: `cv check cv.yaml 2>&1 | head -1`
+/// closes the pipe while a file with many problems still has kilobytes of report to
+/// write, and Rust turns that `EPIPE` into a panic inside `eprint!`. Every diagnostic
+/// goes through here so a hung-up reader stops the writing instead of crashing the run.
+pub fn err_text(text: &str) {
+    use std::io::Write;
+    let _ = write!(std::io::stderr(), "{text}");
 }
 
 /// Print validation warnings (if any) to stderr (ADR-0015: warnings never fail).
 pub fn report_warnings(warnings: &[Diag]) {
     let is_tty = std::io::stderr().is_terminal();
     for warning in warnings {
-        eprint!("{}", crate::error::render_diag(warning, is_tty));
+        err_text(&crate::error::render_diag(warning, is_tty));
     }
 }
 
@@ -111,10 +123,10 @@ pub fn report_overflow(output: &crate::render::RenderOutput) {
         output.page_count.saturating_sub(1),
     );
     let is_tty = std::io::stderr().is_terminal();
-    eprint!(
-        "{}",
-        crate::error::render_diag(&Diag::plain(message, Severity::Warning), is_tty)
-    );
+    err_text(&crate::error::render_diag(
+        &Diag::plain(message, Severity::Warning),
+        is_tty,
+    ));
 }
 
 /// `design.font_paths` entries are relative to the YAML file's directory (spec §4 example).

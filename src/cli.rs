@@ -103,7 +103,10 @@ pub struct CheckArgs {
 /// happens in `main` (miette graphical output for input diagnostics, ADR-0018).
 pub fn run(cli: Cli) -> crate::error::Result<()> {
     if cli.verbose {
-        eprintln!("cv: verbose mode on; font paths: {:?}", cli.font_path);
+        commands::err_line(&format!(
+            "cv: verbose mode on; font paths: {:?}",
+            cli.font_path
+        ));
     }
 
     match &cli.command {

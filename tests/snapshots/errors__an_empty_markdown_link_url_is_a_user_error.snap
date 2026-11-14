@@ -1,0 +1,13 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  × the Markdown link "home" has no URL
+   ╭─[cv.yaml:4:12]
+ 3 │   name: Jane Doe
+ 4 │   summary: My work is at [home]().
+   ·            ───────────┬───────────
+   ·                       ╰── this Markdown link
+   ╰────
+  help: the PDF export refuses an empty link target — give it a URL or write the text without
+        brackets

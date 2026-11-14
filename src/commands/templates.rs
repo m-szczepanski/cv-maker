@@ -6,12 +6,12 @@ use crate::error::Result;
 use crate::templates;
 
 pub fn run() -> Result<()> {
-    // Every name in `builtin_names()` names a folder in the same embedded tree
-    // `load_builtin` reads, so a listed name always loads (rule 14 invariant).
+    // A listed built-in that fails to load is a defect in the shipped assets, reported
+    // as the typed internal error `load_builtin` builds rather than assumed away here.
     let loaded: Vec<templates::Template> = templates::builtin_names()
         .iter()
-        .map(|name| templates::load_builtin(name).expect("a listed built-in loads"))
-        .collect();
+        .map(|name| templates::load_builtin(name))
+        .collect::<Result<_>>()?;
     let width = loaded
         .iter()
         .map(|t| t.name.chars().count())

@@ -314,7 +314,7 @@ fn sync_template_watch(
             // Watch failing on a folder that passed `is_dir` is a race (removed in
             // between) or an OS watch-slot fault; the build already states everything
             // about the folder, and the next sync retries (ADR-0029).
-            Err(error) => eprint!("{}", unwatchable_folder(&dir, &error)),
+            Err(error) => super::err_text(&unwatchable_folder(&dir, &error)),
         }
     }
 }
@@ -386,10 +386,10 @@ fn hash_file(path: &Path) -> Option<u64> {
 /// watch's per-build output (spec §3). Errors print and the loop continues.
 fn build_once(args: &BuildArgs, cli: &Cli) {
     if let Err(error) = crate::commands::build::run(args, cli) {
-        eprint!(
-            "{}",
-            crate::error::report(&error, std::io::stderr().is_terminal())
-        );
+        crate::commands::err_text(&crate::error::report(
+            &error,
+            std::io::stderr().is_terminal(),
+        ));
     }
 }
 

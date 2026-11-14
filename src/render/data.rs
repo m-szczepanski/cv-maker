@@ -245,8 +245,10 @@ pub fn page_name(page: Page) -> String {
 
 /// Serialize the data file to a YAML string (deterministic: struct field order).
 ///
-/// Our own structs always serialize: every field is a string, a validated finite
-/// number, or a sequence of those, so an error would be a `cv` bug (rule 14).
+/// Our own structs always serialize — every field is a string, a float, or a sequence of
+/// those, and `serde_yaml_ng` writes non-finite floats as `.nan`/`.inf` rather than
+/// failing (a nonsense `design.fit_floor.min_scale` reaches here that way, and
+/// `FitConfig::from_design` is what contains it). An error would be a `cv` bug (rule 14).
 pub fn to_yaml(cv: &Cv, design: &Design) -> String {
     serde_yaml_ng::to_string(&DataFile::new(cv, design))
         .expect("the template-facing data file always serializes")
@@ -347,7 +349,7 @@ mod tests {
     /// The set of fields the tool parses into inline-Markdown tokens is a contract:
     /// `data.yaml` carries token lists for exactly the fields
     /// [`crate::model::Cv::markdown_texts`] names, so the Markdown URL check and the
-    /// template-facing data can never cover different fields (ADR-0016, ADR-0034).
+    /// template-facing data can never cover different fields (ADR-0016, ADR-0033).
     #[test]
     fn the_tokenized_fields_are_exactly_the_ones_markdown_texts_lists() {
         let doc = Document::parse_yaml(SOURCE).expect("fixture parses");

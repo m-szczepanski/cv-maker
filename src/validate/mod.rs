@@ -10,7 +10,7 @@
 
 pub mod spans;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use miette::Severity;
 
@@ -32,11 +32,12 @@ struct Checks {
 /// The outcome of validating one YAML file.
 #[derive(Debug)]
 pub enum Outcome {
-    /// The CV can render: the template its reference resolved to, plus the warnings
-    /// that never fail a build. Handing the template back means the render uses
-    /// exactly what was checked, and reads the folder once, not twice.
+    /// The CV can render: the template its reference resolved to, the user font files
+    /// and the warnings that never fail a build. Handing both back means the render uses
+    /// exactly what was checked, and reads each input once, not twice.
     Valid {
         template: Template,
+        font_items: Vec<Vec<u8>>,
         warnings: Vec<Diag>,
     },
     /// Every error the checks found, in check order (spec §5: all errors, not the
@@ -47,14 +48,15 @@ pub enum Outcome {
 /// Run every semantic check against the parsed document.
 ///
 /// `yaml_source` is needed for span lookup (ADR-0014); `source_name` is the file name
-/// shown in diagnostic snippets. `font_items` are the user font files already read by
-/// the caller (`--font-path` + `design.font_paths`). `base_dir` is the input file's
+/// shown in diagnostic snippets. `font_dirs` are the user font directories
+/// (`--font-path` + `design.font_paths`, already resolved against the input file); they
+/// are read once here and handed back on success. `base_dir` is the input file's
 /// directory, the anchor for custom template path references (ADR-0027).
 pub fn validate(
     yaml_source: &str,
     source_name: &str,
     document: &Document,
-    font_items: &[Vec<u8>],
+    font_dirs: &[PathBuf],
     base_dir: &Path,
 ) -> Outcome {
     let spans = spans::scalar_spans(yaml_source);
@@ -63,7 +65,21 @@ pub fn validate(
 
     check_schema_version(document.schema, &spans, &source, &mut checks);
     check_template(&document.design, base_dir, &spans, &source, &mut checks);
-    check_fonts(&document.design, font_items, &spans, &source, &mut checks);
+    // Reading the user font directories can fail; that failure is one more thing wrong
+    // with the input, reported alongside the rest (spec §5), not a reason to stop
+    // looking at the file.
+    let font_items = match crate::render::fonts::collect_font_dir_files(font_dirs) {
+        Ok(items) => {
+            check_fonts(&document.design, &items, &spans, &source, &mut checks);
+            items
+        }
+        Err(error) => {
+            checks
+                .errors
+                .push(Diag::plain(error.to_string(), Severity::Error));
+            Vec::new()
+        }
+    };
     check_urls(&document.cv, &spans, &source, &mut checks);
     check_markdown_urls(&document.cv, &spans, &source, &mut checks);
     check_duplicate_titles(&document.cv, &spans, &source, &mut checks);
@@ -76,6 +92,7 @@ pub fn validate(
     if checks.errors.is_empty() {
         Outcome::Valid {
             template,
+            font_items,
             warnings: checks.warnings,
         }
     } else {
@@ -317,29 +334,40 @@ fn is_well_formed_url(url: &str) -> bool {
     !url.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
-/// Reject Markdown links whose URL Typst cannot turn into a hyperlink (ADR-0017,
-/// ADR-0034): the same conservative check as the contact links, because an empty URL
-/// fails the compile (labeling it a *template* error) and a schemeless one would render
-/// a link that goes nowhere.
+/// Check the URLs inside inline Markdown (ADR-0017, ADR-0033). Two severities, because
+/// the two cases differ: an empty target makes the *export* fail (`link()` rejects it,
+/// and Typst's diagnostic would surface as a template error — spec §5 keeps those
+/// distinct from user errors), while a target no PDF reader can resolve — a bare host, a
+/// path relative to the PDF file — still renders and is only worth a warning
+/// (ADR-0015). Other schemes (`mailto:`, `tel:`) are working links and stay quiet: the
+/// check must not be stricter than the renderer (ADR-0031).
 fn check_markdown_urls(
     cv: &Cv,
     spans: &spans::SpanMap,
     source: &miette::NamedSource<String>,
     result: &mut Checks,
 ) {
-    const HELP: &str = "link URLs must start with http:// or https:// and include a host";
     for field in cv.markdown_texts() {
         for token in crate::markdown::parse_inline(field.text) {
             let crate::markdown::InlineToken::Link { text: label, url } = token else {
                 continue;
             };
-            if is_well_formed_url(&url) {
-                continue;
-            }
-            let message = if url.is_empty() {
-                format!("the Markdown link \"{label}\" has no URL")
+            let (message, severity, help) = if url.is_empty() {
+                (
+                    format!("the Markdown link \"{label}\" has no URL"),
+                    Severity::Error,
+                    "the PDF export refuses an empty link target — give it a URL or write the text without brackets",
+                )
+            } else if !is_resolvable_url(&url) {
+                (
+                    format!(
+                        "the Markdown link \"{label}\" points at \"{url}\", which no PDF reader can open"
+                    ),
+                    Severity::Warning,
+                    "a link in a PDF needs an absolute URL, e.g. https://example.dev or mailto:jane@example.dev",
+                )
             } else {
-                format!("malformed URL \"{url}\" in the Markdown link \"{label}\"")
+                continue;
             };
             let diag = diag_at(
                 spans,
@@ -347,11 +375,37 @@ fn check_markdown_urls(
                 &field.span_path,
                 message,
                 "this Markdown link",
-                Severity::Error,
+                severity,
             )
-            .with_help(HELP);
-            result.errors.push(diag);
+            .with_help(help.to_owned());
+            if severity == Severity::Warning {
+                result.warnings.push(diag);
+            } else {
+                result.errors.push(diag);
+            }
         }
+    }
+}
+
+/// Whether a PDF reader can act on this destination: an absolute scheme with something
+/// resolvable behind it — a host for the `//host/path` forms, an address for `mailto:`
+/// and friends — and no whitespace or control characters.
+fn is_resolvable_url(url: &str) -> bool {
+    if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+    let Some((scheme, target)) = url.split_once(':') else {
+        return false; // a bare host or a path relative to the PDF resolves to nothing
+    };
+    if scheme.is_empty() || target.is_empty() {
+        return false;
+    }
+    match target.strip_prefix("//") {
+        Some(rest) => {
+            let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+            !host.is_empty()
+        }
+        None => true,
     }
 }
 
@@ -461,52 +515,103 @@ mod tests {
         assert!(!is_well_formed_url("https://example.dev/\n"));
     }
 
+    /// A Markdown destination is followable when it carries a scheme and a target:
+    /// `https://`, `mailto:`, `tel:` all work in a PDF reader; a bare host, a relative
+    /// path, an empty or space-containing URL does not (ADR-0033).
+    #[test]
+    fn resolvable_markdown_targets_are_absolute_and_space_free() {
+        for url in [
+            "https://example.dev/x?y=1#z",
+            "http://example.dev",
+            "mailto:jane@example.dev",
+            "MAILTO:jane@example.dev",
+            "tel:+49000000000",
+            "ftp://files.example.dev/a",
+        ] {
+            assert!(is_resolvable_url(url), "{url} must be accepted");
+        }
+        for url in [
+            "",
+            "github.com/me",
+            "/absolute/path",
+            "./relative",
+            "notes",
+            "#anchor",
+            "https://exa mple.dev",
+            "https://example.dev\n",
+            "https://",
+            ":no-scheme-before-colon",
+        ] {
+            assert!(!is_resolvable_url(url), "{url} must be reported");
+        }
+    }
+
     /// The URLs inside Markdown are checked where they are written, so every
-    /// Markdown-enabled field is covered (ADR-0034).
+    /// Markdown-enabled field is covered — and the two severities split the way the
+    /// renderer does (ADR-0033): an empty target fails the export so it is an error, a
+    /// target no reader can open still renders so it only warns.
     #[test]
     fn markdown_link_urls_are_checked_in_every_markdown_field() {
         let yaml = concat!(
             "schema: 1\ncv:\n  name: X\n",
-            "  summary: see [a](github.com/x)\n",
+            "  summary: bare host [a](github.com/x) and [b]()\n",
             "  sections:\n",
             "    - title: E\n      type: entries\n      items:\n",
-            "        - heading: H\n          bullets:\n            - also [b]()\n",
+            "        - heading: H\n          bullets:\n            - mail [c](mailto:me@example.dev)\n",
             "    - title: B\n      type: bullets\n      items:\n",
-            "        - flat [c](ftp://x)\n",
+            "        - schemeless [d](notes)\n",
             "    - title: T\n      type: text\n      items:\n",
-            "        - para [d](https://ok.dev)\n",
+            "        - fine [e](https://ok.dev/x)\n",
         );
         let document = crate::model::Document::from_yaml_str(yaml).expect("parses");
-        let errors = markdown_url_errors(&document.cv, yaml);
-        let messages: Vec<&str> = errors.iter().map(|d| d.message.as_str()).collect();
+        let (errors, warnings) = markdown_url_diags(&document.cv, yaml);
+
         assert_eq!(
-            messages,
+            messages(&errors),
+            ["the Markdown link \"b\" has no URL"],
+            "only the empty target, which the export itself refuses, is an error"
+        );
+        assert_eq!(
+            messages(&warnings),
             [
-                "malformed URL \"github.com/x\" in the Markdown link \"a\"",
-                "the Markdown link \"b\" has no URL",
-                "malformed URL \"ftp://x\" in the Markdown link \"c\"",
+                "the Markdown link \"a\" points at \"github.com/x\", which no PDF reader can open",
+                "the Markdown link \"d\" points at \"notes\", which no PDF reader can open",
             ],
-            "the valid link stays quiet; each field reports its own problem"
+            "a bare host or a relative path warns where it is written; mailto stays quiet"
         );
         assert!(
-            errors.iter().all(|d| d.labels.len() == 1),
+            errors
+                .iter()
+                .chain(warnings.iter())
+                .all(|d| d.labels.len() == 1),
             "every problem is labeled at the field that holds it"
         );
         assert!(
             errors.iter().all(|d| d
                 .help
                 .as_deref()
-                .is_some_and(|h| h.contains("http:// or https://"))),
-            "the help explains the rule"
+                .is_some_and(|h| h.contains("empty link target"))),
+            "the error explains why it breaks the build"
+        );
+        assert!(
+            warnings
+                .iter()
+                .all(|d| d.help.as_deref().is_some_and(|h| h.contains("mailto:"))),
+            "the warning says what a resolvable target looks like"
         );
     }
 
-    fn markdown_url_errors(cv: &crate::model::Cv, yaml: &str) -> Vec<Diag> {
+    fn messages(diags: &[Diag]) -> Vec<&str> {
+        diags.iter().map(|d| d.message.as_str()).collect()
+    }
+
+    /// Runs the check over one CV, returning errors and warnings separately.
+    fn markdown_url_diags(cv: &crate::model::Cv, yaml: &str) -> (Vec<Diag>, Vec<Diag>) {
         let spans = spans::scalar_spans(yaml);
         let source = miette::NamedSource::new("cv.yaml", yaml.to_owned());
         let mut result = Checks::default();
         check_markdown_urls(cv, &spans, &source, &mut result);
-        result.errors
+        (result.errors, result.warnings)
     }
 
     #[test]

@@ -9,8 +9,9 @@
 # Usage: scripts/fresh-machine-test.sh [dist/cv-<version>-<triple>.tar.xz]
 #        (defaults to the archive for the machine running the test)
 #
-# Only an archive for this machine's architecture can actually be run; any other is
-# verified structurally and reported as not executable here.
+# An archive built for another triple cannot be executed here, so it is verified
+# structurally and reported as such. An archive for *this* triple that will not run is a
+# failure — that is exactly the broken or quarantined download this test exists to catch.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -19,31 +20,48 @@ cd "$(dirname "$0")/.."
 VERSION="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
 ARCH="$(uname -m | sed 's/arm64/aarch64/')"
 OS="$(uname | tr 'A-Z' 'a-z' | sed 's/darwin/apple-darwin/;s/^linux$/linux-gnu/')"
-TRIPLE="$ARCH-$OS"
-ARCHIVE="${1:-dist/cv-$VERSION-$TRIPLE.tar.xz}"
+HOST="$ARCH-$OS"
+ARCHIVE="${1:-dist/cv-$VERSION-$HOST.tar.xz}"
+NAME="$(basename "$ARCHIVE")"
+# cv-0.1.0-aarch64-apple-darwin.tar.xz → aarch64-apple-darwin
+TRIPLE="${NAME#cv-"$VERSION"-}"
+TRIPLE="${TRIPLE%.tar.xz}"
+TRIPLE="${TRIPLE%.zip}"
 
 if [ ! -f "$ARCHIVE" ]; then
   echo "no archive at $ARCHIVE — run scripts/build-release.sh first" >&2
   exit 1
 fi
-echo "==> artifact: $ARCHIVE"
+echo "==> artifact: $ARCHIVE (target $TRIPLE)"
 
-EXPECTED="$(cd "$(dirname "$ARCHIVE")" && awk -v f="$(basename "$ARCHIVE")" '$2 == f {print $1}' SHA256SUMS.txt)"
+SUMS="$(dirname "$ARCHIVE")/SHA256SUMS.txt"
+[ -f "$SUMS" ] || { echo "no checksum file at $SUMS" >&2; exit 1; }
+EXPECTED="$(awk -v f="$NAME" '$2 == f {print $1; exit}' "$SUMS")"
+[ -n "$EXPECTED" ] || { echo "$NAME is not listed in $SUMS" >&2; exit 1; }
 ACTUAL="$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')"
 [ "$EXPECTED" = "$ACTUAL" ] || { echo "checksum mismatch: $ACTUAL != $EXPECTED" >&2; exit 1; }
 echo "    sha256 ok: $ACTUAL"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/cv-fresh-XXXXXX")"
 trap 'chmod -R u+rwX "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
-tar -xf "$ARCHIVE" -C "$WORK"
-BIN="$(find "$WORK" -type f \( -name cv -o -name cv.exe \) | head -n 1)"
+case "$NAME" in
+  *.zip) unzip -q "$ARCHIVE" -d "$WORK" ;;
+  *) tar -xf "$ARCHIVE" -C "$WORK" ;;
+esac
+BIN="$(find "$WORK" -type f \( -name cv -o -name cv.exe \) -print -quit)"
+[ -n "$BIN" ] || { echo "the archive holds no cv binary" >&2; exit 1; }
 chmod +x "$BIN"
 printf '    binary: %s\n' "$BIN"
 file "$BIN" | sed 's/^/    /'
 
-if ! "$BIN" --version >/dev/null 2>&1; then
-  echo "    this machine cannot execute $TRIPLE binaries: structure checked, not run"
+if [ "$TRIPLE" != "$HOST" ]; then
+  echo "    built for $TRIPLE, this machine is $HOST: structure checked, not run"
   exit 0
+fi
+if ! "$BIN" --version >/dev/null 2>&1; then
+  echo "    a $HOST binary that will not run here is a failed artifact" >&2
+  echo "    (on macOS, a downloaded binary may need right-click → Open once)" >&2
+  exit 1
 fi
 
 PROJECT="$WORK/project"

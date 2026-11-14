@@ -74,11 +74,18 @@ pub fn load(reference: &str, base_dir: &Path) -> Result<Template> {
 }
 
 /// Names of the built-in templates, sorted for stable output.
+///
+/// A folder counts as a built-in only if it carries the `template.typ` entry point:
+/// anything else embedded under `templates/` (a shared asset folder, a half-added
+/// template) is not a template, and listing it would offer a name that `cv init
+/// --template` and `design.template` cannot use.
 pub fn builtin_names() -> Vec<String> {
     let mut names: Vec<String> = BUILTIN_TEMPLATES
         .dirs()
         .filter_map(|d| d.path().file_name())
-        .map(|n| n.to_string_lossy().into_owned())
+        .filter_map(|n| n.to_str())
+        .filter(|name| has_entry_point(&embedded_template_files(name)))
+        .map(str::to_owned)
         .collect();
     names.sort();
     names
@@ -114,10 +121,19 @@ fn embedded_template_files(name: &str) -> Vec<(&'static str, &'static [u8])> {
 /// Load a built-in template by name from the embedded assets.
 pub fn load_builtin(name: &str) -> Result<Template> {
     let files = embedded_template_files(name);
-    if files.is_empty() {
+    if !has_entry_point(&files) {
+        // Either no such folder or a folder that is not a template (a shared asset
+        // directory): from the user's side both read as an unknown name, and the answer
+        // is the built-in list, not an internal error about our own assets.
         return Err(unknown_template_error(name));
     }
     assemble_builtin(name, &files)
+}
+
+/// Whether a file list is a template folder: a `template.typ` at its root.
+fn has_entry_point(files: &[(&str, &[u8])]) -> bool {
+    // Folder-relative, so equality also excludes a nested `lib/template.typ` helper.
+    files.iter().any(|(path, _)| *path == "template.typ")
 }
 
 /// Defect in the binary's own embedded assets: shipped templates are pinned by the
