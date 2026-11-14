@@ -173,9 +173,9 @@ unit-tested in `src/commands/watch.rs` (see its coverage note).
       - §5/§8: `cv check` was *stricter* than rendering on font case (Typst matches
         family names case-insensitively) — validation now agrees, and `inter` builds
         byte-identically to `Inter` (ADR-0031).
-      - §5: a Markdown link with a schemeless or empty URL passed `cv check` and then
-        failed `cv build` as a *template* error; Markdown link URLs are validated where
-        they are written (ADR-0033).
+      - §5: a Markdown link with an empty URL passed `cv check` and then
+        failed `cv build` as a *template* error; it is reported by `cv check` now, at the
+        field where it is written (ADR-0033).
       - §5: the span scan lost alignment on YAML aliases, so a diagnostic for a value
         after an aliased one pointed at the wrong line — aliases now take their frame
         slot and report without a snippet (ADR-0033).
@@ -185,7 +185,8 @@ unit-tested in `src/commands/watch.rs` (see its coverage note).
         `#`, `$`, `*`, `_`, `\`, `@`, backticks and `#panic(...)`/`#show`/`#{ … }`
         constructs and asserts they stay literal text and one page.
       - §3: piping a listing (`cv fonts | head -1`) panicked on the closed pipe; stdout
-        and stderr writes are best-effort now and the run exits 0 (test added).
+        and stderr writes are best-effort now and the run exits 0 (test added; the review
+        round found the stderr half was not actually covered — see 6.8).
       - §9: templates and user fonts were each read twice per build (validation, then
         render) — the resolved template and the font files now travel with `LoadedCv`,
         so a build reads each once and the render layer holds no unreachable I/O arms
@@ -210,6 +211,39 @@ unit-tested in `src/commands/watch.rs` (see its coverage note).
 - [x] 6.7 Build time re-measured after the M6 changes (M4 target < 500 ms): release build
       on this machine, typical first-fit **198–201 ms** (232 ms cold), so the extra
       fidelity in the fit loop and the single-read refactor cost nothing measurable.
+- [x] 6.8 Review round — eight findings from reading the branch back, each reproduced
+      before being fixed and each with a test now:
+      - **stderr panicked on a hung-up reader** (`cv check bad.yaml 2>&1 | head -1`,
+        157 KB of diagnostics, exit 101). The M6 pipe fix had only covered stdout. Every
+        diagnostic path now writes through `out_line`/`err_line`/`err_text` and ignores
+        `EPIPE` (ADR-0041); the regression test runs the real pipeline on both streams.
+      - **An unreadable font directory hid every other error**: `load_cv` returned the
+        I/O error before validation ran, so a stale `design.font_paths` entry masked
+        schema and URL problems (spec §5 wants all of them). Validation reads the
+        directories and reports the failure as a diagnostic among the rest, handing the
+        bytes back on success (ADR-0034 amended).
+      - **The fresh-machine harness could pass a broken artifact**: it decided "wrong
+        architecture" by failing to exec, so a corrupt or Gatekeeper-blocked host binary
+        exited 0. Runnability is now read from the triple in the file name; a host-triple
+        artifact that will not run is a hard failure, and `.zip` archives unpack with
+        `unzip` so the script works on Linux too (ADR-0037 amended, verified against a
+        deliberately corrupt archive).
+      - **`mailto:` links were rejected** — the first version of the Markdown URL check
+        applied the contact-link http(s)-only rule, which outlawed content that rendered
+        and worked (a CV built at M5 stopped building). Severity now follows the
+        renderer: empty target = error, unresolvable target = warning, any absolute
+        scheme = accepted (ADR-0033 amended).
+      - **`cv templates` could panic** on a stray embedded folder, because
+        `builtin_names()` listed every directory under `templates/`. One predicate
+        (`template.typ` at the folder root) now defines what a built-in is, used by both
+        the listing and `load_builtin`, so a non-template folder is simply not a known
+        name — and a bundle that is a template but fails to load stays a typed internal
+        error rather than a crash (ADR-0042).
+      - Three low-severity accuracy fixes: ADR cross-references that cited ADR-0034 for
+        ADR-0033's work, a `to_yaml` invariant comment claiming all numbers are finite
+        (they are not — nonsense fit floors serialize as `.nan` and are clamped by the
+        fit loop), and README claims on link targets and on byte-identical output across
+        machines (true for bundled and user-supplied fonts, not for system-resolved ones).
 
 Measured coverage (`cargo llvm-cov`, re-run against the committed M6 tree):
 **100.00% lines and 100.00% functions** (3936 lines, 545 functions; lines were 96.67%

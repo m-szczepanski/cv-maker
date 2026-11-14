@@ -21,10 +21,10 @@ cv.pdf  1 page  fit: scale 1.00  (218 ms)
   and type until it does, and tells you what it applied.
 - **Everything in the file.** Fonts, margins, sizes, spacing, colours and the template
   live in a `design:` block in the same YAML — no separate theme files.
-- **Text you can select and copy.** Real text, correct reading order, tagged PDF,
-  embedded fonts, so it survives applicant-tracking systems and other machines.
+- **Text you can select and copy.** Real text, not an image: selectable, searchable,
+  with a tagged structure tree and embedded fonts, so it reads the same on any machine.
 - **Deterministic.** The same file and the same version of `cv` produce byte-identical
-  PDFs, so the output can live in version control.
+  PDFs, so the output can live in version control next to its source.
 - **Errors that point at the line**, with a suggestion when you meant something else.
 
 ---
@@ -47,7 +47,7 @@ Each release carries a `SHA256SUMS.txt`; `shasum -a 256 -c SHA256SUMS.txt` confi
 archive you downloaded is the one that was built. On macOS, a binary you downloaded but
 did not build is quarantined: allow it with right-click → Open the first time.
 
-Or build it yourself from a checkout:
+Or build it yourself from a checkout (needs a Rust toolchain, see `rust-toolchain.toml`):
 
 ```sh
 cargo build --release      # target/release/cv
@@ -137,8 +137,9 @@ In `summary`, in the bullets of an `entries` item, and in the items of `bullets`
 
 Anything else is literal text — hashes, dollar signs, underscores and backslashes in a
 job title stay exactly as you typed them. Headings, organisations, dates and section
-titles are always literal. A link target must be a complete `http(s)://` URL; `cv check`
-tells you before the render does.
+titles are always literal. A link target needs to be an absolute URL for a PDF reader to
+open it (`https://example.dev`, `mailto:jane@example.dev`); a bare `github.com/me` warns,
+and an empty `[label]()` is an error, because the export refuses it.
 
 ---
 
@@ -301,7 +302,9 @@ rather than one at a time.
 
 - **Your CV never leaves your machine.** `cv` has no network access at all.
 - **Reproducible output.** Pin the version of `cv` and the PDF is byte-identical
-  anywhere; that is why the same file can live in git next to its output.
+  anywhere, which is why the output can live in git next to its source. That holds while
+  the fonts come from the binary or from your own `font_paths`; a family resolved from the
+  operating system can differ between machines (`cv fonts` shows where each came from).
 - **Dates are strings.** Write `2021 – present`, `Q3 2019`, whatever you want to see.
 - **Licence:** MIT. Bundled fonts are under their own open licences (see
   `fonts/LICENSES.md`).

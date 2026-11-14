@@ -559,26 +559,31 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   validation warnings. Corrected the comment. A test pins both halves: the warning
   survives `--quiet`, and the success line does not.
 
-## ADR-0033 — Markdown link URLs are checked like contact links, and aliases keep spans honest
+## ADR-0033 — Markdown link URLs are checked where they are written, and aliases keep spans honest
 
-- **Context:** Two audit findings. (1) `summary: see [work](github.com/me/x)` passed
-  `cv check` and then failed `cv build` with **"template error: URL must not be
-  empty"** — a user data mistake reported as a template bug (spec §5 says those are
-  distinct), and Typst genuinely refuses an empty target. (2) The span scan ignored
-  alias events, so a value written as a YAML alias not only lost its own span but
-  shifted every later sibling in that mapping: diagnostics pointed at the wrong line.
+- **Context:** Two audit findings. (1) `summary: see [work]()` passed `cv check` and then
+  failed `cv build` with **"template error: URL must not be empty"** — a user data mistake
+  reported as a template bug (spec §5 says those are distinct), and Typst genuinely
+  refuses an empty target. (2) The span scan ignored alias events, so a value written as
+  a YAML alias not only lost its own span but shifted every later sibling in that
+  mapping: diagnostics pointed at the wrong line.
 - **Decision:** (1) `check_markdown_urls` walks the parsed tokens of exactly the
-  Markdown-enabled fields (`Cv::markdown_texts`) and applies the same conservative
-  rule as contact links (ADR-0017): http(s) plus a host, no spaces. An empty target gets
-  its own message. `data.yaml` and the check must cover the same fields — pinned by a
-  drift test over the fixture in `src/render/data.rs`. (2) The span walker treats an
-  alias as a value that takes its frame slot without recording a span, so later siblings
-  stay aligned and a check that rejects an aliased value reports the resolved value
-  without a snippet — a real, tested path (`diag_at` is the single place that decides
-  labeled-or-plain).
-- **Consequences:** `cv check` is a predictor of `cv build` again; mailto and relative
-  targets in Markdown now need http(s) (same contract as contact links, one rule
-  everywhere); one diagnostic helper replaces six near-identical fallback ladders.
+  Markdown-enabled fields (`Cv::markdown_texts`) and splits the severities the way the
+  renderer behaves: an **empty** target is an error (the export refuses it), a target no
+  PDF reader can open — bare host, path relative to the PDF, embedded whitespace — is a
+  **warning** (it renders, ADR-0015), and any absolute scheme (`https:`, `mailto:`,
+  `tel:`, `ftp:`) is accepted. `data.yaml` and the check must cover the same fields —
+  pinned by a drift test over the fixture in `src/render/data.rs`. (2) The span walker
+  treats an alias as a value that takes its frame slot without recording a span, so later
+  siblings stay aligned and a check that rejects an aliased value reports the resolved
+  value without a snippet — a real, tested path (`diag_at` is the single place that
+  decides labeled-or-plain).
+- **Consequences:** `cv check` predicts `cv build` for the case that actually breaks the
+  build; a `mailto:` CV keeps working (it did before M6 — an earlier draft of this ADR
+  applied the contact-link http(s)-only rule to Markdown links and that would have been a
+  silent breaking release, caught in review); contact links keep ADR-0017's stricter rule
+  on purpose, since they are the CV's primary routes to the candidate; one diagnostic
+  helper replaces six near-identical fallback ladders.
 
 ## ADR-0034 — `render` never touches the file system; the command layer does
 
@@ -586,14 +591,19 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   read them twice (validation had already done it) and the render layer carried an I/O
   error arm that no validated input can reach. Spec §9 wants the render layer to be a
   pure compile step over its inputs.
-- **Decision:** `load_cv` collects the user font files once — an unreadable directory is
-  an I/O error named where the path came from the user — and hands the bytes to
-  validation and to `RenderRequest.user_font_items`. `Engine::build` is now infallible,
-  and `book_families`/`to_yaml`/`schema_json` (which cannot fail for the tool's own
-  data) return values instead of `Result`, panicking with a stated invariant on the
-  impossible case (`.AGENTS.md` rule 14) rather than inventing user-facing errors.
+- **Decision:** `validate` reads the user font directories once and hands the bytes back
+  in `Outcome::Valid { font_items, .. }`, which `load_cv` passes to
+  `RenderRequest.user_font_items`; `src/render/` receives data, not paths. `Engine::build`
+  is infallible, and `book_families`/`to_yaml`/`schema_json` (which cannot fail for the
+  tool's own data) return values instead of `Result`, panicking with a stated invariant on
+  the impossible case (`.AGENTS.md` rule 14) rather than inventing user-facing errors.
+  A directory that cannot be read is reported **as a diagnostic among the other checks**
+  — an earlier draft returned the I/O error from `load_cv` before validation ran, which
+  hid every schema, template and URL problem in the same file behind one message and
+  broke spec §5's "all errors of all checks are collected" (caught in review).
 - **Consequences:** One font read per build, Typst types and file system policy still
-  confined to `src/render/` (spec §13.7), and three unreachable error arms are gone.
+  confined to `src/render/` (spec §13.7), three unreachable error arms are gone, and a
+  CV with both a bad `font_paths` entry and other mistakes lists them together.
 
 ## ADR-0035 — validation hands the resolved template to the build
 
@@ -632,27 +642,6 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   Test code no longer uses `unwrap_or_else(|| panic!(…))` forms whose failure paths
   show up as uncovered either.
 
-## ADR-0040 — a PDF the exporter refuses is its own error class
-
-- **Context:** The audit assumed `typst_pdf::pdf` can only fail on "options misuse",
-  since our `PdfOptions` are constants. That is wrong (pinned 0.15.1 sources): the
-  exporter inspects the *document* while writing it — `src/attach.rs:30` rejects a
-  malformed `mime-type`, `src/convert.rs:462` an image it cannot encode, `src/link.rs`
-  and `PdfError::VersionMismatch` others. A custom template can call any Typst
-  function (spec §6 puts no whitelist on it), so a CV whose document compiles cleanly
-  can still be refused on the way out, and that was an untested, undocumented arm.
-- **Decision:** Keep it as `RenderError::Pdf` — a distinct class from a compile failure
-  (`Template`) and from a user data error (`Input`): the Typst source was valid, the
-  PDF was not. Two tests pin it: a unit test over `render()` and an e2e `cv build` on a
-  template that does `#pdf.attach("data.yaml", mime-type: "not a mime type")`, asserting
-  exit 1, "PDF export failed", the exporter's own reason, and no PDF left behind.
-  Related guarantee, same audit: the atomic write now *flushes before it renames*,
-  because a buffered sink would otherwise let a truncated PDF be published — which is
-  exactly what spec §3 forbids.
-- **Consequences:** `src/render/` no longer claims an impossibility it cannot keep; the
-  last unreachable-by-assumption arm in the render layer is a tested error class; a
-  template author gets the exporter's message rather than a mystery.
-
 ## ADR-0037 — release binaries built locally with `cargo-zigbuild` (ADR-0013)
 
 - **Context:** ADR-0013 dropped CI, so M6's binaries have to come off a development
@@ -670,6 +659,12 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   from an unpacked archive in an isolated `HOME` with a minimal `PATH` for the host
   triple, and reports the others as structure-checked but not executed. Reproducing the
   whole matrix on another machine needs zig, cargo-zigbuild and the rustup targets.
+  Which archives are runnable is decided by the **triple in the file name**, never by
+  trying to exec them: an earlier draft treated a failed `--version` as "wrong
+  architecture" and exited 0, so a corrupt or Gatekeeper-blocked artifact — the exact
+  failure a release check exists to catch — passed the acceptance test (found in review;
+  a host-triple artifact that will not run is now a hard failure, and `.zip` archives are
+  unpacked with `unzip` so the script also works on Linux).
 
 ## ADR-0038 — tagged PDF 1.7, no PDF/A or PDF/UA validator (§14 closed)
 
@@ -704,6 +699,64 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   here, per-job variants still out of scope for v1 — nothing in the model blocks a
   later `--variant` (`schema`/`cv`/`design` stay independent keys).
 
+## ADR-0040 — a PDF the exporter refuses is its own error class
+
+- **Context:** The audit assumed `typst_pdf::pdf` can only fail on "options misuse",
+  since our `PdfOptions` are constants. That is wrong (pinned 0.15.1 sources): the
+  exporter inspects the *document* while writing it — `src/attach.rs:30` rejects a
+  malformed `mime-type`, `src/convert.rs:462` an image it cannot encode, `src/link.rs`
+  and `PdfError::VersionMismatch` others. A custom template can call any Typst
+  function (spec §6 puts no whitelist on it), so a CV whose document compiles cleanly
+  can still be refused on the way out, and that was an untested, undocumented arm.
+- **Decision:** Keep it as `RenderError::Pdf` — a distinct class from a compile failure
+  (`Template`) and from a user data error (`Input`): the Typst source was valid, the
+  PDF was not. Two tests pin it: a unit test over `render()` and an e2e `cv build` on a
+  template that does `#pdf.attach("data.yaml", mime-type: "not a mime type")`, asserting
+  exit 1, "PDF export failed", the exporter's own reason, and no PDF left behind.
+  Related guarantee, same audit: the atomic write now *flushes before it renames*,
+  because a buffered sink would otherwise let a truncated PDF be published — which is
+  exactly what spec §3 forbids.
+- **Consequences:** `src/render/` no longer claims an impossibility it cannot keep; the
+  last unreachable-by-assumption arm in the render layer is a tested error class; a
+  template author gets the exporter's message rather than a mystery.
+
+## ADR-0041 — a hung-up reader stops the writing, on both streams (spec §3)
+
+- **Context:** M6 made `cv fonts | head -1` exit 0 instead of panicking, but only for
+  stdout (`out_line`). Review found the same crash on the far more common stderr path:
+  `cv check broken.yaml 2>&1 | head -1` panics (exit 101) as soon as the report is larger
+  than the ~64 KB pipe buffer — a file with 300 duplicate titles writes 157 KB — because
+  Rust ignores `SIGPIPE` and `eprint!` turns the resulting `EPIPE` into a panic. The
+  affected sites were every diagnostic writer: `report_warnings`, `report_overflow`, the
+  fatal report in `main`, `cv watch`'s per-build report and its folder-watch warning, and
+  the `--verbose` line. `err_line` existed but was used in two places.
+- **Decision:** Every byte the CLI writes to a stream goes through the best-effort
+  helpers in `src/commands/mod.rs` — `out_line`, `err_line`, and a new `err_text` for
+  pre-rendered multi-line reports — and no `print!`/`eprint!` remains in `src/` outside
+  test code. Hanging up is the reader's choice, not an error to report and never a crash;
+  the exit code still reflects the command's own result. Pinned by two e2e tests that run
+  a real pipeline: the listing (stdout) and a 157 KB diagnostic stream (stderr).
+- **Consequences:** `cv | head`, `cv | grep`, and editors that kill the reader mid-report
+  behave; the panic cannot come back silently, because both streams have a test.
+
+## ADR-0042 — only loadable folders are built-in names
+
+- **Context:** Closing a coverage gap first made `cv templates` call
+  `load_builtin(name).expect("a listed built-in loads")`. Review pointed out that
+  `builtin_names()` returned *every* folder embedded under `templates/`, so the
+  invariant behind that `expect` was only held by the parity tests: a stray folder
+  (`templates/shared/`, a half-added template) would turn a listing command into a panic.
+- **Decision:** One predicate says what a built-in is — `has_entry_point`, a
+  `template.typ` at the folder root — and both `builtin_names()` and `load_builtin` use
+  it: a folder without an entry point is not a template, so it is neither listed nor
+  offered as a did-you-mean, and asking for it by name gives the user-facing
+  `unknown template` error with the real built-ins listed. `cv templates` keeps the typed
+  error path for a bundle that *is* a template but fails to load (undecodable source,
+  unusable manifest), reported as `internal error: built-in template 'x' … (this is a bug
+  in cv)`.
+- **Consequences:** No panic reachable from the shipped asset tree's shape; the cost is
+  one never-taken error continuation in `cv templates`, which is the accepted trade over
+  a crash (`.AGENTS.md` rule 21 prefers the typed report).
 ## Open questions (spec §14) — status
 
 All closed as of M6; each carries the ADR that resolved it.

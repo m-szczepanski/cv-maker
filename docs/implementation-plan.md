@@ -339,17 +339,20 @@ custom template's warnings vanished under `--quiet`. Move the loop out of the gu
 M5 comment calling this "the reporting point for M5" is stale (custom templates shipped)
 and is corrected.
 
-**ADR-0033 — Markdown link URLs are checked, and aliases keep spans honest.** An empty or
-schemeless Markdown link URL passed `cv check` and then failed `cv build` as a *template*
-error; the same conservative rule as contact links now runs over the Markdown-enabled
-fields. Separately, the span scan ignored alias events, which shifted every later
-sibling's span: aliases take their frame slot without a span, and `diag_at` is the single
-place deciding labeled-or-plain.
+**ADR-0033 — Markdown link URLs are checked where they are written, aliases keep spans
+honest.** An empty Markdown link URL passed `cv check` and then failed `cv build` as a
+*template* error. Severity now follows the renderer: empty → error (the export refuses
+it), unresolvable (bare host, relative path, spaces) → warning, any absolute scheme
+(`mailto:`, `tel:`) → accepted, so the check never outlaws what the build accepts.
+Separately, the span scan ignored alias events, which shifted every later sibling's span:
+aliases take their frame slot without a span, and `diag_at` is the single place deciding
+labeled-or-plain.
 
-**ADR-0034 / 0035 — read once, use once.** The command layer collects the user font
-files and validation hands back the resolved template, so `cv build` no longer reads the
-fonts or the template folder twice and the render layer keeps no unreachable I/O error
-arm.
+**ADR-0034 / 0035 — read once, use once.** Validation reads the user font files and hands
+them back together with the resolved template, so `cv build` no longer reads the fonts or
+the template folder twice and the render layer keeps no unreachable I/O error arm. An
+unreadable font directory stays a diagnostic *among* the collected errors, because
+returning it early hid every other problem in the file (spec §5).
 
 **ADR-0036 — unreachable-by-construction code is deleted, injected, or documented.** The
 M2–M5 rule-21 residue is closed: impossible arms deleted or turned into stated
@@ -374,6 +377,11 @@ document while writing (`attach.rs` mime types, `convert.rs` images, `link.rs`),
 custom template can call any Typst function. Kept as `RenderError::Pdf` and tested twice
 (unit + e2e); the atomic write also flushes before renaming, because a buffered sink
 could otherwise publish a truncated PDF (spec §3).
+
+**ADR-0041 / 0042 — review round.** A hung-up reader stops the writing on *both* streams
+(stderr had the same panic the stdout fix removed, at 157 KB of diagnostics), and
+`builtin_names()` lists only folders with a `template.typ` entry point, so a stray
+embedded asset is a typed report instead of a panic in `cv templates`.
 
 ### Tasks → commits
 

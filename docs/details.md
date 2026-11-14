@@ -204,7 +204,8 @@ Every `design` field has a default defined in Rust. A missing `design` section i
 1. Parse YAML with spans retained.
 2. Deserialize into typed Rust structs (`schemars`-derivable).
 3. Run semantic checks the types cannot express: font family exists, template exists, size/margin values parse, colors are valid hex, URLs are well formed.
-4. Report **all** errors found, not just the first, using `miette` with the YAML source and a labeled span.
+4. Report **all** errors found, not just the first, using `miette` with the YAML source and a labeled span. This includes a font directory that cannot be read: it is one more thing wrong with the input, not a reason to stop checking it.
+5. Severity follows what the renderer does (ADR-0033): an inline Markdown link with an **empty** target is an error, because the PDF export refuses it; a target no reader can resolve (a bare host, a path relative to the PDF) warns, because it renders; any absolute URL (`https:`, `mailto:`) is accepted. `cv.contact.links` stay on the stricter ADR-0017 rule.
 
 Example of the quality bar:
 
