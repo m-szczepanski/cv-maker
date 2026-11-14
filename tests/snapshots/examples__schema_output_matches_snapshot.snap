@@ -138,6 +138,14 @@ expression: schema
           ],
           "default": null
         },
+        "gdpr": {
+          "description": "GDPR consent statement, rendered as small muted text at the bottom of the\nlast page. Literal text (no Markdown), the user's own wording. Defaults\nto [`DEFAULT_GDPR`]; `gdpr: null` opts out of the footer entirely\n(ADR-0045).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": "I hereby give consent for my personal data included in my application to be processed for the purposes of the recruitment process in accordance with Regulation (EU) 2016/679 of the European Parliament and of the Council of 27 April 2016 (GDPR)."
+        },
         "headline": {
           "description": "Short role statement under the name.",
           "type": [

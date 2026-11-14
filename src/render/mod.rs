@@ -306,6 +306,60 @@ mod tests {
         );
     }
 
+    /// The GDPR footer contract (ADR-0045), verified against real layout: a
+    /// `v(1fr)` before an unbreakable block pins that block to the bottom margin
+    /// of its page. This is the only place frames are reachable (spec §13.7).
+    #[test]
+    fn a_stretch_before_the_last_block_pins_it_to_the_page_bottom() {
+        let request = test_request(
+            "#set page(height: 20cm, width: 10cm, margin: (x: 2cm, y: 2cm))\n\
+             #line(length: 3cm, stroke: 1pt)\n\
+             #block(height: 4cm, breakable: false)[HEAD]\n\
+             #v(1fr)\n\
+             #block(breakable: false)[FOOTER]\n",
+        );
+        let engine = Engine::build(&request);
+        let warned = engine
+            .engine
+            .compile_with_input("template.typ", fit_to_inputs(FitParams::default()));
+        // `typst_pdf::pdf` pins the generic document type, exactly as in `compile`.
+        let doc = warned.output.expect("the template compiles");
+        typst_pdf::pdf(&doc, &engine.options).expect("the test document exports");
+        assert_eq!(doc.pages().len(), 1);
+
+        let frame = &doc.pages()[0].frame;
+        let content_bottom_pt = frame.height().to_pt() - typst::layout::Abs::cm(2.0).to_pt();
+        let bottom = max_text_bottom(frame).expect("the page has text");
+        assert!(
+            bottom <= content_bottom_pt + 1.0,
+            "nothing renders past the bottom margin: {bottom:.1} > {content_bottom_pt:.1}"
+        );
+        assert!(
+            bottom >= content_bottom_pt - 15.0,
+            "the footer sits flush at the bottom margin, not in flow ({bottom:.1} vs \
+             {content_bottom_pt:.1})"
+        );
+    }
+
+    /// Deepest text position on a frame, in pt, descending into group frames.
+    /// Horizontal text has no vertical extent (`TextItem::height` sums y-advances,
+    /// which are 0), so this is the baseline position; group children are relative
+    /// to the group's position, which lives in the item point.
+    fn max_text_bottom(frame: &typst::layout::Frame) -> Option<f64> {
+        frame
+            .items()
+            .filter_map(|(point, item)| {
+                let y = point.y.to_pt();
+                match item {
+                    typst::layout::FrameItem::Text(_) => Some(y),
+                    typst::layout::FrameItem::Group(group) => max_text_bottom(&group.frame)
+                        .map(|child| child + y + group.transform.ty.to_pt()),
+                    _ => None,
+                }
+            })
+            .reduce(f64::max)
+    }
+
     fn test_request(main_source: &str) -> RenderRequest {
         RenderRequest {
             template: crate::templates::Template {

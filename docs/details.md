@@ -27,6 +27,7 @@ cv build             # reads cv.yaml, writes cv.pdf in the same directory
 - Per-CV design configuration (fonts, sizes, margins, colors) in a separate `design` section of the same file.
 - Template support: built-in templates plus user-supplied ones.
 - Guaranteed fit within the target page count (auto-fit; one page by default, configurable with `design.pages`) with clear warnings when impossible.
+- Guaranteed fill: when content fits the target with room to spare, the loop grows the layout so the pages are used, and a section that fits one page is never split across two (ADR-0044, ADR-0046).
 - Great error messages: line-numbered, actionable.
 - Real selectable text in PDFs, correct reading order, ATS-friendly.
 - Deterministic: the same YAML and the same tool version produce the same PDF on every machine.
@@ -138,6 +139,10 @@ cv:
   summary: >
     Backend engineer focused on high-throughput systems and developer tooling.
 
+  gdpr: >-
+    I agree that my personal data may be stored and processed for the purpose
+    of this application.     # optional; the default is the standard consent clause, `null` removes the footer
+
   sections:
     - title: Experience
       type: entries
@@ -196,6 +201,7 @@ design:
 - The set of section types is part of the schema contract and is closed in v1. Templates must support all of them.
 - Bullet and text fields support a **small inline Markdown subset**: `**bold**`, `*italic*`, `` `code` ``, and `[label](url)`. Anything else is literal text. Conversion to Typst must escape all Typst-special characters in user text. User text must never be able to inject Typst code.
 - Dates are free-form strings.
+- `cv.gdpr` (ADR-0045) carries the consent statement, always literal text (no Markdown), the user's own wording. It defaults to the standard recruitment-consent clause (`DEFAULT_GDPR`); `gdpr: null` opts out. Built-in templates render it small and muted at the bottom of the last page; custom templates decide for themselves (`data.yaml` always carries the value, `null` when opted out).
 - Unknown keys are an error (`deny_unknown_fields`), with a "did you mean" hint where practical.
 
 ### Design defaults
@@ -256,6 +262,17 @@ templates/<name>/
    clean, minimal and slick, and hierarchy comes from type, color and spacing.
 3. (Optional) `sidebar`: narrow left column for skills and contact.
 
+Both built-ins follow two page-layout rules (ADR-0046, ADR-0045):
+
+- **A section that fits one page stays whole**: its height is measured against the
+  content area (Typst's `measure` inside `context`) and, when it fits, the section is
+  wrapped in an unbreakable block so Typst moves the whole section to the next page
+  instead of cutting a list in half. A section taller than a page must flow; its
+  heading is `sticky` so it never strands at a page bottom.
+- **`cv.gdpr` renders at the bottom of the last page**: stretchable space (`v(1fr)`)
+  above the statement pins it to the bottom margin — the last page of a multi-page
+  CV, the only page of a one-page CV.
+
 ### Custom templates
 
 `design.template` accepts either a built-in name or a relative path to a template folder (`./my-template`). Custom templates use the same contract. `cv watch` also watches the custom template folder.
@@ -272,14 +289,26 @@ than `design.pages` pages (default 1):
 3. Pick the **least aggressive** setting that fits. Prefer a binary search over a linear walk to limit compile count.
 4. If the content still does not fit at the floor: write the PDF anyway, exit code 0 or a distinct documented exit code (decide and document), and print a clear warning stating how many lines overflow — measured against the `design.pages` target — and suggesting what to change (cut content, raise `design.pages`, or relax `fit_floor` / margins).
 
+When the first compile already fits and the target is more than one page, the loop
+instead **fills** (ADR-0044): content spread thinly over the target's pages looks
+broken, so the loop grows — in bounded searches, each entered only when the previous
+one ended at its cap with the document still fitting — `spacing_scale`, then
+`font_scale`, then `margin_scale`, each to the largest value whose compile still fits
+within the target. The caps (spacing 3.0, font 1.25, margins 1.4) are sanity limits:
+content far below the target cannot fill it gracefully at any setting. A one-page
+target never fills: its layout stays the top-flow identity.
+
 Hard requirements:
 
-- The loop must have a maximum iteration count. No unbounded loops.
+- The loop must have a maximum iteration count. No unbounded loops. Worst case:
+  13 compiles on the tighten path, 19 on the fill path (the two are mutually exclusive).
 - Never go below the floor.
 - Never shrink if the first compile already fits within `design.pages`.
 - The result is deterministic.
 - Fit scale factors are passed to the template through the `fit` object; templates multiply their own sizes and spacings by them.
-- The final output line reports the applied scale.
+- The final output line reports the applied scales.
+- The fit loop measures the whole document, `cv.gdpr` footer included: a full page
+  tightens rather than pushing the footer to a new page.
 
 ---
 

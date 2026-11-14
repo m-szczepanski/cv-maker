@@ -25,9 +25,25 @@ pub struct Cv {
     #[serde(default)]
     pub summary: Option<String>,
 
+    /// GDPR consent statement, rendered as small muted text at the bottom of the
+    /// last page. Literal text (no Markdown), the user's own wording. Defaults
+    /// to [`DEFAULT_GDPR`]; `gdpr: null` opts out of the footer entirely
+    /// (ADR-0045).
+    #[serde(default = "default_gdpr")]
+    pub gdpr: Option<String>,
+
     /// Ordered content sections. An empty list is valid.
     #[serde(default)]
     pub sections: Vec<Section>,
+}
+
+/// The consent clause assumed when `cv.gdpr` is absent — the standard wording
+/// for a recruitment application under Regulation (EU) 2016/679 (ADR-0045).
+/// Users who need different wording (or none) set the field.
+pub const DEFAULT_GDPR: &str = "I hereby give consent for my personal data included in my application to be processed for the purposes of the recruitment process in accordance with Regulation (EU) 2016/679 of the European Parliament and of the Council of 27 April 2016 (GDPR).";
+
+fn default_gdpr() -> Option<String> {
+    Some(DEFAULT_GDPR.to_string())
 }
 
 impl Cv {

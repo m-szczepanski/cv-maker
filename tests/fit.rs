@@ -42,9 +42,9 @@ fn cv_yaml(entries: usize, bullets_per_entry: usize) -> String {
     )
 }
 
-/// A CV with one section per element of `entries_per_section`: a template section
-/// is one unbreakable block, so separate sections paginate as honest whole-page
-/// flows — the multi-page shape the `design.pages` tests need.
+/// A CV with one section per element of `entries_per_section`: multiple sections
+/// give the template many flow points, so pages break between entries naturally —
+/// the multi-page shape the `design.pages` tests need.
 fn sections_yaml(entries_per_section: &[usize]) -> String {
     let mut body = String::new();
     for (s, per) in entries_per_section.iter().enumerate() {
@@ -284,8 +284,8 @@ fn impossible_content_still_builds_with_a_warning_and_exit_zero() {
 }
 
 /// `design.pages: 2` raises the target: content that naturally flows onto a
-/// second page is a first fit — no shrinking, no warning, and the PDF keeps
-/// both pages.
+/// second page is a first fit — never shrunk (every scale stays ≥ 1.00; the
+/// fill phase may grow them), no warning, and the PDF keeps both pages.
 #[test]
 fn two_page_target_does_not_shrink_content_that_fits_two_pages() {
     let dir = unique_dir("fit-two-pages");
@@ -294,8 +294,9 @@ fn two_page_target_does_not_shrink_content_that_fits_two_pages() {
 
     let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
     assert!(ok, "got: {out}");
+    assert!(out.contains("2 pages"), "got: {out}");
     assert!(
-        out.contains("2 pages") && out.contains("fit: scale 1.00"),
+        !out.contains("scale 0.") && !out.contains("spacing 0.") && !out.contains("margins 0."),
         "a CV within its 2-page target must not be shrunk, got: {out}"
     );
     assert!(!out.contains("content still overflows"), "got: {out}");
@@ -335,6 +336,86 @@ fn overflow_warning_counts_pages_past_the_target() {
     );
 }
 
+/// ADR-0044: a sparse CV with a two-page target is *filled*, not just permitted:
+/// the fill stages grow the scales (spacing to its cap here) so both pages
+/// carry content instead of stranding a few lines on the last page.
+#[test]
+fn a_sparse_two_page_cv_is_filled_by_grown_scales() {
+    let dir = unique_dir("fit-fill");
+    let yaml = sections_yaml(&[13]) + "\ndesign:\n  pages: 2\n";
+    fs::write(dir.join("cv.yaml"), yaml).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
+    assert!(ok, "got: {out}");
+    assert!(
+        out.contains("spacing 3.00"),
+        "sparse content reaches the spacing cap, got: {out}"
+    );
+    let pages = pdf_extract::extract_text_by_pages(dir.join("cv.pdf")).expect("text");
+    assert_eq!(pages.len(), 2, "got: {out}");
+    assert!(
+        pages[1].chars().count() > 200,
+        "page 2 must be substantially filled, got: {:?}",
+        pages[1]
+    );
+    assert!(!out.contains("content still overflows"), "got: {out}");
+}
+
+/// ADR-0045: `cv.gdpr` renders on the last page — the only page for a one-page
+/// CV, the target page for a multi-page CV. (The bottom pinning itself is
+/// asserted against real layout in `src/render`.)
+#[test]
+fn the_gdpr_statement_renders_on_the_last_page() {
+    let gdpr = "GDPR-SENTINEL: I agree that my personal data may be processed.";
+    let with_gdpr = |entries: &[usize]| {
+        let mut yaml = sections_yaml(entries);
+        yaml.insert_str(
+            yaml.find("  name: Jane Doe\n")
+                .expect("sections_yaml has a name")
+                + "  name: Jane Doe\n".len(),
+            &format!("  gdpr: \"{gdpr}\"\n"),
+        );
+        yaml
+    };
+
+    // One-page CV: the statement sits on page 1 and nowhere else.
+    let dir = unique_dir("fit-gdpr-one-page");
+    fs::write(dir.join("cv.yaml"), with_gdpr(&[4])).expect("write yaml");
+    let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
+    assert!(ok, "got: {out}");
+    let pages = pdf_extract::extract_text_by_pages(dir.join("cv.pdf")).expect("text");
+    assert_eq!(pages.len(), 1, "got: {out}");
+    assert!(
+        pages[0].contains(gdpr),
+        "the statement renders on the single page, got: {:?}",
+        pages[0]
+    );
+
+    // Two-page CV: the statement moves to the last page with the content.
+    let dir = unique_dir("fit-gdpr-two-pages");
+    fs::write(
+        dir.join("cv.yaml"),
+        with_gdpr(&[13]) + "\ndesign:\n  pages: 2\n",
+    )
+    .expect("write yaml");
+    let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
+    assert!(ok, "got: {out}");
+    let pages = pdf_extract::extract_text_by_pages(dir.join("cv.pdf")).expect("text");
+    assert_eq!(pages.len(), 2, "got: {out}");
+    assert!(
+        pages[pages.len() - 1].contains(gdpr),
+        "the statement renders on the last page, got: {:?}",
+        pages
+    );
+    assert!(
+        !pages[..pages.len() - 1]
+            .iter()
+            .any(|page| page.contains(gdpr)),
+        "the statement must not repeat on earlier pages, got: {:?}",
+        pages
+    );
+}
+
 /// The number in "… spill onto N extra page(s)" of the fit-overflow warning.
 fn reported_extra_pages(out: &str) -> usize {
     let start = out
@@ -345,6 +426,36 @@ fn reported_extra_pages(out: &str) -> usize {
         .take_while(char::is_ascii_digit)
         .collect();
     digits.parse().expect("the spill figure is a number")
+}
+
+/// ADR-0046: a section that fits one page is never cut in half — every section
+/// of the fixture fits a page at the default sizes, so each section's heading
+/// and its last entry share a page.
+#[test]
+fn a_section_that_fits_one_page_stays_whole() {
+    let dir = unique_dir("fit-whole-sections");
+    let yaml = sections_yaml(&[9, 9]) + "\ndesign:\n  pages: 2\n";
+    fs::write(dir.join("cv.yaml"), yaml).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["build", "--no-fit", "--output", "cv.pdf"]);
+    assert!(ok, "got: {out}");
+
+    let pages = pdf_extract::extract_text_by_pages(dir.join("cv.pdf")).expect("text");
+    for section in 0..2 {
+        let head = format!("Role {section}.0");
+        let tail = format!("Role {section}.8");
+        let head_page = pages.iter().position(|p| p.contains(&head));
+        let tail_page = pages.iter().position(|p| p.contains(&tail));
+        assert_eq!(
+            head_page, tail_page,
+            "Section {section} must live on one page: {:?} vs {:?}, pages: {pages:?}",
+            head_page, tail_page
+        );
+        assert!(
+            head_page.is_some(),
+            "Section {section} must render, got: {out}"
+        );
+    }
 }
 
 /// `pages: 0` is not a document: a parse error that names the field.

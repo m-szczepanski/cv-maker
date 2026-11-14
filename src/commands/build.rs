@@ -75,11 +75,12 @@ pub fn run(args: &BuildArgs, cli: &Cli) -> Result<()> {
 }
 
 /// The fit part of the success line (spec §7 "reports the applied scale",
-/// ADR-0025 amending ADR-0012): a single `scale` (the font scale) when Phase A
-/// did not tighten anything — byte-compatible with the pre-M4 line for
-/// first-fit CVs — plus the spacing/margins scales when they moved.
+/// ADR-0025 amending ADR-0012): a single `scale` (the font scale) when spacing
+/// and margins did not move — byte-compatible with the pre-M4 line for
+/// first-fit CVs — plus the spacing/margins scales when they did, tightened
+/// below 1.0 or grown by the fill phase above it (ADR-0044).
 fn fit_note(applied: &FitParams) -> String {
-    if applied.spacing_scale >= 1.0 && applied.margin_scale >= 1.0 {
+    if applied.spacing_scale == 1.0 && applied.margin_scale == 1.0 {
         format!("fit: scale {:.2}", applied.font_scale)
     } else {
         format!(
