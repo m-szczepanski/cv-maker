@@ -89,7 +89,7 @@ impl LengthUnit {
 
 impl fmt::Display for Length {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{}", fmt_f64(self.value), self.unit.suffix())
+        write!(f, "{}", self.to_string_form())
     }
 }
 
@@ -143,10 +143,11 @@ impl schemars::JsonSchema for Length {
     }
 }
 
-/// Build a JSON Schema fragment from a fixed JSON literal. `try_from` validates the value;
-/// a literal we control cannot be an invalid schema, so failure falls back to the empty schema.
+/// Build a JSON Schema fragment from a fixed JSON literal. `try_from` validates the
+/// value; the literals in this file are schema documents by construction, so a failure
+/// is a bug in this file and never user input (rule 14).
 fn schema_from_json(value: serde_json::Value) -> schemars::Schema {
-    schemars::Schema::try_from(value).unwrap_or_else(|_| schemars::Schema::default())
+    schemars::Schema::try_from(value).expect("a hand-written schema literal is valid")
 }
 
 /// Parse `"<number><unit>"` with optional whitespace between number and unit.

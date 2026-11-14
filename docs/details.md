@@ -98,6 +98,9 @@ Global flags: `--font-path <dir>` (repeatable), `--quiet`, `--verbose`.
 - Overwrite the PDF silently if it exists.
 - Write atomically (write to a temp file in the same directory, then rename) so a failed build never leaves a corrupt PDF.
 - Success output is one line, e.g. `cv.pdf  1 page  fit: scale 0.94  (118 ms)`.
+- Exit codes: `0` on success — including a build that wrote an overflowing PDF and
+  warned about it (§7 step 4, ADR-0026) — `1` on any error, `2` when the command line
+  itself is malformed (clap's convention, documented in the README).
 
 ---
 
@@ -201,7 +204,8 @@ Every `design` field has a default defined in Rust. A missing `design` section i
 1. Parse YAML with spans retained.
 2. Deserialize into typed Rust structs (`schemars`-derivable).
 3. Run semantic checks the types cannot express: font family exists, template exists, size/margin values parse, colors are valid hex, URLs are well formed.
-4. Report **all** errors found, not just the first, using `miette` with the YAML source and a labeled span.
+4. Report **all** errors found, not just the first, using `miette` with the YAML source and a labeled span. This includes a font directory that cannot be read: it is one more thing wrong with the input, not a reason to stop checking it.
+5. Severity follows what the renderer does (ADR-0033): an inline Markdown link with an **empty** target is an error, because the PDF export refuses it; a target no reader can resolve (a bare host, a path relative to the PDF) warns, because it renders; any absolute URL (`https:`, `mailto:`) is accepted. `cv.contact.links` stay on the stricter ADR-0017 rule.
 
 Example of the quality bar:
 
@@ -242,7 +246,9 @@ templates/<name>/
 ### Built-in templates for v1
 
 1. `compact`: dense, single column, ideal for experienced engineers.
-2. `classic`: conventional layout with a header rule and section dividers.
+2. `classic`: conventional single-column layout — name with the contact block on the
+   right, title-case accent headings. No rules or dividers (ADR-0030): the built-ins are
+   clean, minimal and slick, and hierarchy comes from type, color and spacing.
 3. (Optional) `sidebar`: narrow left column for skills and contact.
 
 ### Custom templates

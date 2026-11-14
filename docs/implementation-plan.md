@@ -307,22 +307,111 @@ from M0 for exactly this task).
 
 ---
 
-## Milestone 6 — Polish and release
+## Milestone 6 — Polish and release (working plan, M5 review merged)
 
-Goal: README, exit codes, release binaries.
+Goal (spec §12 M6): README, closed §14 questions, release binaries, and a release the
+reviewer can hand to a fresh machine. Numbering matches `docs/progress.md`.
 
-- [ ] 6.1 README: 60-second quick start (`init` → edit → `build`), example outputs (PDF
-      screenshots or linked PDFs), full command/flag reference, documented exit codes table
-      (including the fit-overflow code decided in 4.3).
-- [ ] 6.2 Finalize `docs/decisions.md`: every §14 open question answered or explicitly
-      deferred, each with a short rationale.
-- [ ] 6.3 Fresh-machine test: download a release binary, run the quick start end-to-end.
-- [ ] 6.4 Full audit pass against the spec: walk §3–§11 section by section and confirm each
-      requirement has an implementation and (where applicable) a test. Fix or file gaps.
-- [ ] 6.5 Review the code if it comes to code comments and code quality.
-- [ ] Remove the horizontal line dividers in templates as we do not want that as our templates should be very clean, minimal and slick.
+Branch: `feature/m6-polish-and-release`. No new crate dependencies in `Cargo.toml`;
+release cross-compilation is dev tooling (outside the dependency rules, ADR-0013's
+"produced locally" decision), recorded in ADR-0037.
 
-**Accept (spec M6):** a fresh machine can run the quick start using only the downloaded binary.
+### Design decisions (each becomes an ADR)
+
+**ADR-0030 — `classic` ships without rules.** The 5.8 review note: the full-width
+`line()` rules (header rule + section dividers) read as heavy; built-in templates should
+be clean, minimal and slick. Delete both. `classic` keeps its identity through
+typography and layout instead: left-aligned name with a right-hand contact column,
+title-case bold accent headings, semibold orgs, airier rhythm. Spec §6's description of
+`classic` ("header rule and section dividers") and the manifest description change in the
+same commit (spec/code disagreement rule: fix the spec, say which).
+
+**ADR-0031 — font names match the way Typst matches them.** Typst's font lookup is
+case-insensitive (verified in the pinned 0.15.1 source: the selector name is
+lowercased before comparison), so `body: inter` renders Inter while `cv check` rejected
+it — validation was *stricter* than rendering, breaking ADR-0021's shared ground truth.
+Validation compares case-insensitively; `cv fonts` and the did-you-mean hints still
+print canonical names; `inter` and `Inter` must build byte-identical PDFs (test).
+
+**ADR-0032 — `--quiet` keeps Typst render warnings.** ADR-0012 classifies warnings as
+essentials, but `cv build` printed render warnings inside the `!quiet` block, so a
+custom template's warnings vanished under `--quiet`. Move the loop out of the guard; the
+M5 comment calling this "the reporting point for M5" is stale (custom templates shipped)
+and is corrected.
+
+**ADR-0033 — Markdown link URLs are checked where they are written, aliases keep spans
+honest.** An empty Markdown link URL passed `cv check` and then failed `cv build` as a
+*template* error. Severity now follows the renderer: empty → error (the export refuses
+it), unresolvable (bare host, relative path, spaces) → warning, any absolute scheme
+(`mailto:`, `tel:`) → accepted, so the check never outlaws what the build accepts.
+Separately, the span scan ignored alias events, which shifted every later sibling's span:
+aliases take their frame slot without a span, and `diag_at` is the single place deciding
+labeled-or-plain.
+
+**ADR-0034 / 0035 — read once, use once.** Validation reads the user font files and hands
+them back together with the resolved template, so `cv build` no longer reads the fonts or
+the template folder twice and the render layer keeps no unreachable I/O error arm. An
+unreadable font directory stays a diagnostic *among* the collected errors, because
+returning it early hid every other problem in the file (spec §5).
+
+**ADR-0036 — unreachable-by-construction code is deleted, injected, or documented.** The
+M2–M5 rule-21 residue is closed: impossible arms deleted or turned into stated
+invariants, `assemble_builtin` made pure so broken embedded assets are testable, the
+span walker's two-phase `Step` bookkeeping dropped, and `cv watch` split around an
+injected watcher factory and channel so its start, wake, catch-up, refusal and exit paths
+are unit-tested in-process instead of depending on a killed child's profile.
+
+**ADR-0037 — release binaries built locally with `cargo-zigbuild`.** Matrix:
+`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`,
+`aarch64-apple-darwin`, `x86_64-pc-windows-gnu`; `.tar.xz` per Unix target, `.zip` for
+Windows, `SHA256SUMS.txt`, artifacts in `dist/` (gitignored), published by hand
+(ADR-0013 keeps CI out of it). Only the host triple can be executed here.
+
+**ADR-0038 / 0039 — §14 close-out.** Tagged PDF 1.7 with no PDF/A or PDF/UA validator;
+one neutral `cv init` example, extended to show the fit knobs; variants stay out of v1
+with nothing in the model blocking them.
+
+**ADR-0040 — a PDF the exporter refuses is its own error class.** The claim that
+`typst_pdf::pdf` can only fail on constant-option misuse is false: it inspects the
+document while writing (`attach.rs` mime types, `convert.rs` images, `link.rs`), and a
+custom template can call any Typst function. Kept as `RenderError::Pdf` and tested twice
+(unit + e2e); the atomic write also flushes before renaming, because a buffered sink
+could otherwise publish a truncated PDF (spec §3).
+
+**ADR-0041 / 0042 — review round.** A hung-up reader stops the writing on *both* streams
+(stderr had the same panic the stdout fix removed, at 157 KB of diagnostics), and
+`builtin_names()` lists only folders with a `template.typ` entry point, so a stray
+embedded asset is a typed report instead of a panic in `cv templates`.
+
+### Tasks → commits
+
+| # | Deliverable |
+|---|---|
+| 6.1 | README: user-centred — what it does, install, 60-second quick start, editing your CV, commands and flags, templates, fit behaviour, exit codes, troubleshooting |
+| 6.2 | `docs/decisions.md`: ADR-0038/0039 + the §14 status table fully closed |
+| 6.3 | `scripts/build-release.sh`, the five-target matrix, `dist/SHA256SUMS.txt` |
+| 6.4 | `scripts/fresh-machine-test.sh`: checksum, architecture, then the quick start from an unpacked binary in an isolated `HOME` with a minimal `PATH` |
+| 6.5 | Spec §3–§11 audit, with the gaps fixed and tested: font case agreement, Markdown link URLs, alias span alignment, `--quiet` warnings, the §11 escaping class, broken-pipe panics, double reads |
+| 6.6 | Code-quality pass: `classic` rules removed (ADR-0030), defensive branches closed (ADR-0036), comment cleanup under `.AGENTS.md` 1–3 |
+| 6.7 | Coverage sweep (`cargo llvm-cov`) and the build-time re-measurement, Gates, progress update |
+
+### Files touched
+
+- new: `README.md`, `scripts/build-release.sh`, `dist/` (ignored)
+- changed: `templates/classic/{template.typ,manifest.yaml}`, `docs/details.md` (§6
+  description), `src/commands/{build,watch,mod}.rs`, `src/commands/schema.rs`,
+  `src/error.rs`, `src/model/mod.rs`, `src/templates/mod.rs`, `src/validate/{mod,spans}.rs`,
+  `src/render/fonts.rs` (case-insensitive check), tests, docs
+- risk notes for the human reviewer: `classic` visual quality after the rules are gone
+  (spec §13 reviewer note); the watch restructure (same behaviour, new seams); the font
+  case change (accepts input previously rejected).
+
+### Gates
+
+`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` per commit;
+`cargo llvm-cov` at milestone end (100% line target, rule 21); no new crate dependencies.
+
+---
 
 ---
 

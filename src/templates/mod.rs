@@ -74,106 +74,105 @@ pub fn load(reference: &str, base_dir: &Path) -> Result<Template> {
 }
 
 /// Names of the built-in templates, sorted for stable output.
+///
+/// A folder counts as a built-in only if it carries the `template.typ` entry point:
+/// anything else embedded under `templates/` (a shared asset folder, a half-added
+/// template) is not a template, and listing it would offer a name that `cv init
+/// --template` and `design.template` cannot use.
 pub fn builtin_names() -> Vec<String> {
     let mut names: Vec<String> = BUILTIN_TEMPLATES
         .dirs()
         .filter_map(|d| d.path().file_name())
-        .map(|n| n.to_string_lossy().into_owned())
+        .filter_map(|n| n.to_str())
+        .filter(|name| has_entry_point(&embedded_template_files(name)))
+        .map(str::to_owned)
         .collect();
     names.sort();
     names
 }
 
-/// Collect every file embedded under `templates/<name>/`, recursively.
-/// Returns (path, contents) pairs with paths relative to `templates/`, sorted for
-/// determinism.
+/// The files embedded under `templates/<name>/` as (path relative to the folder,
+/// contents) pairs, sorted for determinism. Empty for a name that is not embedded.
 fn embedded_template_files(name: &str) -> Vec<(&'static str, &'static [u8])> {
     fn walk<'a>(dir: &Dir<'a>, out: &mut Vec<(&'a str, &'a [u8])>) {
         for entry in dir.entries() {
             match entry {
-                DirEntry::File(f) => {
-                    if let Some(p) = f.path().to_str() {
-                        out.push((p, f.contents()));
-                    }
-                }
+                DirEntry::File(f) => out.extend(f.path().to_str().map(|p| (p, f.contents()))),
                 DirEntry::Dir(d) => walk(d, out),
             }
         }
     }
+    // Embedded paths are relative to `templates/` (e.g. `compact/template.typ`), so the
+    // folder is selected by prefix; `Dir::get_file` compares full paths and would
+    // never find the subfolder's file. Paths that are not valid UTF-8 cannot occur in
+    // files that ship as source text, so they are skipped rather than errored on.
     let prefix = format!("{name}/");
-    let mut out: Vec<(&'static str, &'static [u8])> = Vec::new();
-    walk(&BUILTIN_TEMPLATES, &mut out);
-    out.retain(|(p, _)| p.starts_with(&prefix));
-    out.sort_unstable_by_key(|(p, _)| *p);
-    out
+    let mut files = Vec::new();
+    walk(&BUILTIN_TEMPLATES, &mut files);
+    let mut owned: Vec<(&'static str, &'static [u8])> = files
+        .into_iter()
+        .filter(|(p, _)| p.starts_with(prefix.as_str()))
+        .map(|(p, c)| (&p[prefix.len()..], c))
+        .collect();
+    owned.sort_unstable_by_key(|(p, _)| *p);
+    owned
 }
 
 /// Load a built-in template by name from the embedded assets.
 pub fn load_builtin(name: &str) -> Result<Template> {
-    // Embedded file paths are relative to the `templates/` folder that include_dir embeds
-    // (e.g. `compact/template.typ`), so we match by path prefix rather than using
-    // `Dir::get_file` on the subdirectory (its lookup compares full paths).
-    let prefix = format!("{name}/");
     let files = embedded_template_files(name);
-
-    if files.is_empty() {
+    if !has_entry_point(&files) {
+        // Either no such folder or a folder that is not a template (a shared asset
+        // directory): from the user's side both read as an unknown name, and the answer
+        // is the built-in list, not an internal error about our own assets.
         return Err(unknown_template_error(name));
     }
+    assemble_builtin(name, &files)
+}
 
-    let find = |path: &str| -> Option<&'static [u8]> {
-        files
-            .iter()
-            .find(|(p, _)| *p == format!("{prefix}{path}"))
-            .map(|(_, c)| *c)
+/// Whether a file list is a template folder: a `template.typ` at its root.
+fn has_entry_point(files: &[(&str, &[u8])]) -> bool {
+    // Folder-relative, so equality also excludes a nested `lib/template.typ` helper.
+    files.iter().any(|(path, _)| *path == "template.typ")
+}
+
+/// Defect in the binary's own embedded assets: shipped templates are pinned by the
+/// parity tests in this module, so reaching a user through these arms means a `cv` bug.
+fn builtin_asset_bug(name: &str, problem: impl Into<String>) -> Error {
+    Error::Internal(format!(
+        "built-in template '{name}' {} (this is a bug in cv)",
+        problem.into()
+    ))
+}
+
+/// Build a built-in template from the files embedded under its folder. Pure over the
+/// file list, so a test can feed it broken synthetic assets: `load_builtin` can only
+/// ever hand it the shipped ones.
+fn assemble_builtin(name: &str, files: &[(&str, &[u8])]) -> Result<Template> {
+    let find = |path: &str| files.iter().find(|(p, _)| *p == path).map(|(_, c)| *c);
+    let text = |bytes: &[u8], what: &str| -> Result<String> {
+        String::from_utf8(bytes.to_vec())
+            .map_err(|_| builtin_asset_bug(name, format!("{what} is not valid UTF-8")))
     };
 
-    let utf8 = |bytes: &'static [u8], what: &str| -> Result<String> {
-        String::from_utf8(bytes.to_vec()).map_err(|_| {
-            // Unreachable for shipped assets: embedded files are compiled in and are
-            // valid UTF-8 by construction (checked by `cargo test` at least once).
-            Error::Internal(format!(
-                "built-in template '{name}' {what} is not valid UTF-8"
-            ))
-        })
-    };
+    let main_bytes =
+        find("template.typ").ok_or_else(|| builtin_asset_bug(name, "has no template.typ"))?;
+    let main_source = text(main_bytes, "template.typ")?;
 
-    let main_bytes = find("template.typ").ok_or_else(|| {
-        // Unreachable: every template folder ships a template.typ (enforced by tests).
-        Error::Internal(format!(
-            "built-in template '{name}' has no template.typ (this is a bug in cv)"
-        ))
-    })?;
-    let main_source = utf8(main_bytes, "template.typ")?;
+    let extra_sources = files
+        .iter()
+        .filter(|(path, _)| *path != "template.typ" && path.ends_with(".typ"))
+        .map(|(path, contents)| Ok(((*path).to_owned(), text(contents, path)?)))
+        .collect::<Result<Vec<_>>>()?;
 
-    let mut extra_sources = Vec::new();
-    for (path, contents) in &files {
-        // Invariant: `embedded_template_files` retained only paths under this exact
-        // prefix, so the strip always succeeds.
-        let virtual_path = path.strip_prefix(&prefix).expect("path starts with prefix");
-        if virtual_path == "template.typ" {
-            continue;
-        }
-        if std::path::Path::new(virtual_path).extension() != Some(std::ffi::OsStr::new("typ")) {
-            continue;
-        }
-        extra_sources.push((virtual_path.to_owned(), utf8(contents, virtual_path)?));
-    }
-
-    let manifest_bytes = find("manifest.yaml").ok_or_else(|| {
-        // Unreachable: every template folder ships a manifest.yaml (enforced by tests).
-        Error::Internal(format!(
-            "built-in template '{name}' has no manifest.yaml (this is a bug in cv)"
-        ))
-    })?;
-    let manifest = manifest::Manifest::from_yaml_str(&utf8(manifest_bytes, "manifest.yaml")?)?;
-    // Shipped manifests are usable — the built-in parity tests in this module pin
-    // every embedded manifest through `check_usable`, so this branch cannot reach
-    // a user.
-    manifest.check_usable().map_err(|problem| {
-        Error::Internal(format!(
-            "built-in template '{name}' is not usable: {problem}"
-        ))
-    })?;
+    let manifest_bytes =
+        find("manifest.yaml").ok_or_else(|| builtin_asset_bug(name, "has no manifest.yaml"))?;
+    let manifest = manifest::Manifest::from_yaml_str(&text(manifest_bytes, "manifest.yaml")?)?;
+    // Every shipped manifest is usable: `every_builtin_manifest_is_usable_and_named_after_its_folder`
+    // runs this same check on the embedded assets.
+    manifest
+        .check_usable()
+        .map_err(|problem| builtin_asset_bug(name, format!("is not usable: {problem}")))?;
 
     Ok(template_from(&manifest, main_source, extra_sources))
 }
@@ -320,9 +319,204 @@ fn unknown_template_error(name: &str) -> Error {
 mod tests {
     use super::*;
 
+    /// A minimal, usable manifest for the synthetic-asset tests below.
+    const GOOD_MANIFEST: &str =
+        "name: x\ndescription: test template\nschema_version: 1\nsupported: [page]\n";
+
     #[test]
     fn builtin_names_lists_both_builtins_sorted() {
         assert_eq!(builtin_names(), ["classic", "compact"]);
+    }
+
+    #[test]
+    fn references_group_looks_through_the_helper_sources_too() {
+        // The consistency scan covers the whole folder, not just the entry point:
+        // a group read only in `lib/` must count as read (ADR-0028).
+        let template = Template {
+            name: "custom".into(),
+            description: "test".into(),
+            supported_options: vec![],
+            main_source: "#let a = 1".into(),
+            extra_sources: vec![("lib/type.typ".into(), "design.margins.x".into())],
+        };
+        assert!(
+            template.references_group("margins"),
+            "a group read in a helper source is read"
+        );
+        assert!(
+            !template.references_group("colors"),
+            "a group no source mentions is not read"
+        );
+    }
+
+    #[test]
+    fn embedded_files_are_folder_relative_and_sorted() {
+        let paths: Vec<&str> = embedded_template_files("compact")
+            .iter()
+            .map(|(p, _)| *p)
+            .collect();
+        assert!(
+            paths.contains(&"template.typ")
+                && paths.contains(&"manifest.yaml")
+                && paths.contains(&"lib/inline.typ"),
+            "got: {paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|p| p.starts_with("compact/")),
+            "paths are relative to the template folder: {paths:?}"
+        );
+        let mut sorted = paths.clone();
+        sorted.sort_unstable();
+        assert_eq!(paths, sorted, "deterministic order");
+        assert!(
+            embedded_template_files("no-such-template").is_empty(),
+            "an unembedded name has no files"
+        );
+    }
+
+    #[test]
+    fn assemble_builtin_reports_a_folder_without_an_entry_point() {
+        let err = assemble_builtin("x", &[("manifest.yaml", GOOD_MANIFEST.as_bytes())])
+            .expect_err("no template.typ is a broken bundle");
+        assert!(
+            err.to_string().contains("has no template.typ"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn assemble_builtin_reports_a_folder_without_a_manifest() {
+        let err = assemble_builtin("x", &[("template.typ", b"#page \"\"".as_slice())])
+            .expect_err("no manifest.yaml is a broken bundle");
+        assert!(
+            err.to_string().contains("has no manifest.yaml"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn assemble_builtin_reports_undecodable_sources() {
+        let err = assemble_builtin(
+            "x",
+            &[
+                ("template.typ", [0xff_u8, 0xfe, 0x00][..].as_ref()),
+                ("manifest.yaml", GOOD_MANIFEST.as_bytes()),
+            ],
+        )
+        .expect_err("a non-UTF-8 entry point is a broken bundle");
+        let message = err.to_string();
+        assert!(
+            message.contains("template.typ") && message.contains("not valid UTF-8"),
+            "got: {message}"
+        );
+
+        let err = assemble_builtin(
+            "x",
+            &[
+                ("template.typ", b"#let a = 1".as_slice()),
+                ("lib/broken.typ", [0xff_u8][..].as_ref()),
+                ("manifest.yaml", GOOD_MANIFEST.as_bytes()),
+            ],
+        )
+        .expect_err("a non-UTF-8 helper is a broken bundle");
+        assert!(
+            err.to_string().contains("lib/broken.typ"),
+            "the failing source is named: {err}"
+        );
+    }
+
+    #[test]
+    fn assemble_builtin_reports_an_unusable_or_unparseable_manifest() {
+        let files = [
+            ("template.typ", "#let a = 1".as_bytes()),
+            (
+                "manifest.yaml",
+                b"name: x\ndescription: d\nschema_version: 9\n".as_slice(),
+            ),
+        ];
+        let err = assemble_builtin("x", &files).expect_err("a foreign manifest version");
+        assert!(err.to_string().contains("is not usable"), "got: {err}");
+
+        let files = [
+            ("template.typ", "#let a = 1".as_bytes()),
+            ("manifest.yaml", b"name: x\nnope: 1\n".as_slice()),
+        ];
+        let err = assemble_builtin("x", &files).expect_err("a malformed manifest");
+        assert!(err.to_string().contains("nope"), "the key is named: {err}");
+    }
+
+    #[test]
+    fn assemble_builtin_loads_helpers_and_ignores_non_sources() {
+        let files = [
+            ("manifest.yaml", GOOD_MANIFEST.as_bytes()),
+            (
+                "template.typ",
+                b"#import \"lib/inline.typ\": inline".as_slice(),
+            ),
+            ("lib/inline.typ", b"#let inline(x) = x".as_slice()),
+            // Binary assets are not compiler sources: undecodable bytes are fine here.
+            ("assets/logo.png", [0xff_u8, 0x50, 0x4e, 0x47][..].as_ref()),
+        ];
+        let template = assemble_builtin("x", &files).expect("assembles");
+        assert_eq!(template.name, "x");
+        assert_eq!(
+            template.extra_sources,
+            vec![("lib/inline.typ".to_owned(), "#let inline(x) = x".to_owned())],
+            "only .typ helpers, in path order"
+        );
+    }
+
+    #[test]
+    fn assemble_builtin_reports_an_undecodable_manifest() {
+        let files = [
+            ("template.typ", "#let a = 1".as_bytes()),
+            ("manifest.yaml", [0xc3_u8, 0x28, 0x61][..].as_ref()),
+        ];
+        let err = assemble_builtin("x", &files).expect_err("undecodable manifest");
+        assert!(
+            err.to_string().contains("manifest.yaml") && err.to_string().contains("UTF-8"),
+            "the failing asset is named: {err}"
+        );
+    }
+
+    #[test]
+    fn references_group_sees_the_helper_sources_too() {
+        // The consistency check reads the whole folder: a group mentioned only in a
+        // helper must count as read, and an unrelated helper must not invent one.
+        let template = Template {
+            name: "custom".into(),
+            description: "d".into(),
+            supported_options: vec![],
+            main_source: "#let d = 1".into(),
+            extra_sources: vec![
+                (
+                    "lib/inline.typ".to_owned(),
+                    "design.colors.accent".to_owned(),
+                ),
+                ("lib/page.typ".to_owned(), "design.page".to_owned()),
+            ],
+        };
+        assert!(template.references_group("colors"), "helper source counts");
+        assert!(template.references_group("page"));
+        assert!(
+            !template.references_group("margins"),
+            "a group no source mentions is not read"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_template_directory_is_a_typed_io_error() {
+        // `walk_typ_files` reads the folder before reading its sources: a path that
+        // is not a directory surfaces as `Error::Io` naming it, never a panic.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("not-a-dir");
+        std::fs::write(&file, "x").expect("write file");
+        let mut sources = Vec::new();
+        let err = walk_typ_files(&file, "", "./x", &mut sources).expect_err("not a directory");
+        assert!(
+            err.to_string().contains("not-a-dir"),
+            "the error names the path: {err}"
+        );
     }
 
     #[test]

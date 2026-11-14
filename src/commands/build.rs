@@ -2,7 +2,6 @@
 //! The one-page fit loop (spec §7, plan 4.1) drives repeated compiles against one
 //! engine, so fonts and template sources load exactly once per build.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -16,20 +15,18 @@ pub fn run(args: &BuildArgs, cli: &Cli) -> Result<()> {
 
     let loaded = crate::commands::load_cv(&args.file, &cli.font_path)?;
     let document = loaded.document;
+    // The reference was resolved and judged by validation, which handed the template
+    // over: a built-in name or the custom folder path, relative to the YAML file.
+    let template = loaded.template;
 
-    // A built-in name or a custom folder path (relative to the YAML file, ADR-0027);
-    // `load_cv` already validated it, so this reload only fetches the sources.
-    let base_dir = args.file.parent().unwrap_or(Path::new("."));
-    let template = crate::templates::load(&document.design.template, base_dir)?;
-
-    let data_yaml = render::data::to_yaml(&document.cv, &document.design)?;
+    let data_yaml = render::data::to_yaml(&document.cv, &document.design);
     let request = RenderRequest {
         template,
         data_yaml,
-        user_font_dirs: loaded.font_dirs,
+        user_font_items: loaded.font_items,
     };
 
-    let engine = Engine::build(&request).map_err(Error::Render)?;
+    let engine = Engine::build(&request);
     let config = FitConfig {
         // `--no-fit` overrides the design setting for this run (plan 4.4).
         enabled: document.design.fit_one_page && !args.no_fit,
@@ -39,7 +36,7 @@ pub fn run(args: &BuildArgs, cli: &Cli) -> Result<()> {
     let output = outcome.output;
 
     if cli.verbose {
-        eprintln!("cv: fit: {} compiles", outcome.compiles);
+        super::err_line(&format!("cv: fit: {} compiles", outcome.compiles));
     }
 
     let out_path = match &args.output {
@@ -48,7 +45,12 @@ pub fn run(args: &BuildArgs, cli: &Cli) -> Result<()> {
     };
     write_atomic(&out_path, &output.pdf)?;
 
-    super::report_warnings(&loaded.validation.warnings);
+    super::report_warnings(&loaded.warnings);
+    // Typst render warnings (e.g. an unknown font in a custom template) are essentials,
+    // not progress: they print under `--quiet` too (ADR-0012).
+    for warning in &output.warnings {
+        super::err_line(&format!("warning: {warning}"));
+    }
 
     if outcome.overflowed {
         // Spec §7 step 4 + ADR-0026: the PDF was written; this warning is an
@@ -59,21 +61,14 @@ pub fn run(args: &BuildArgs, cli: &Cli) -> Result<()> {
 
     if !cli.quiet {
         let ms = started.elapsed().as_millis();
-        println!(
+        super::out_line(&format!(
             "{}  {} page{}  {}  ({} ms)",
             out_path.display(),
             output.page_count,
             if output.page_count == 1 { "" } else { "s" },
             fit_note(&outcome.applied),
             ms
-        );
-        // Typst render warnings (e.g. font substitution) cannot occur for validated
-        // input in M2: validation resolves families against the same font book the
-        // render uses (ADR-0014), so every state Typst would warn about is rejected
-        // before it compiles. Kept as the reporting point for M5 custom templates.
-        for warning in &output.warnings {
-            eprintln!("warning: {warning}");
-        }
+        ));
     }
 
     Ok(())
@@ -100,38 +95,136 @@ fn default_output_path(input: &Path) -> PathBuf {
     input.with_file_name(format!("{}.pdf", stem.to_string_lossy()))
 }
 
-/// Write to a temp file in the target directory, then rename (spec §3: a failed build must
-/// never leave a corrupt PDF).
+/// Write to a temp file in the target directory, then rename it over the destination
+/// (spec §3: a failed build never leaves a corrupt PDF). Both disk steps report the
+/// same typed error naming the destination.
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     let temp = tempfile::Builder::new()
         .prefix(".cv-")
         .suffix(".tmp")
         .tempfile_in(dir)
-        .map_err(|source| Error::Io {
-            path: dir.display().to_string(),
-            source,
-        })?;
-    // Writing a freshly created temp file in a directory that just accepted it can only
-    // fail on a full or failing disk; surfaced as an I/O error rather than a panic.
-    (temp.as_file().write_all(bytes)).map_err(|source| Error::Io {
-        path: path.display().to_string(),
-        source,
-    })?;
-    temp.persist(path).map_err(|e| {
-        // persist errors carry the original error and the destination; the path is
-        // included in the Write variant's message
-        Error::Write {
-            path: path.display().to_string(),
-            message: e.to_string(),
-        }
-    })?;
+        .map_err(|source| write_failure(path, source))?;
+    write_to(&mut temp.as_file(), path, bytes)?;
+    temp.persist(path)
+        .map_err(|e| write_failure(path, e.error))?;
     Ok(())
+}
+
+/// The PDF bytes into a sink, then flush it: the rename that follows must not publish
+/// a file whose tail is still buffered (spec §3). The sink is a parameter so this
+/// user-facing failure has a test: a real disk only breaks when it is full or failing,
+/// which no test can arrange, while the message the user sees must be right.
+///
+/// Coverage note (rule 21): the fault is injected at this seam, so `write_atomic`'s
+/// `?` below never sees an error in a test — the disk in a temp directory always
+/// accepts the PDF.
+fn write_to(sink: &mut dyn std::io::Write, path: &Path, bytes: &[u8]) -> Result<()> {
+    sink.write_all(bytes)
+        .and_then(|()| sink.flush())
+        .map_err(|source| write_failure(path, source))
+}
+
+/// One write failure: the destination that was asked for, the OS reason.
+fn write_failure(path: &Path, source: std::io::Error) -> Error {
+    Error::Write {
+        path: path.display().to_string(),
+        message: source.to_string(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io;
+
+    /// A sink that can be told to break on the write, on the flush, or on neither:
+    /// the three states of the disk the PDF is written to.
+    struct Sink {
+        break_write: bool,
+        break_flush: bool,
+        written: Vec<u8>,
+    }
+
+    impl Sink {
+        /// A disk that takes the bytes.
+        fn working() -> Self {
+            Self {
+                break_write: false,
+                break_flush: false,
+                written: Vec::new(),
+            }
+        }
+
+        /// A disk with no room left: `write` itself refuses.
+        fn full() -> Self {
+            Self {
+                break_write: true,
+                break_flush: false,
+                written: Vec::new(),
+            }
+        }
+
+        /// A device that accepts the bytes and loses them on the way out: the failure
+        /// only shows when the buffer is flushed.
+        fn failing() -> Self {
+            Self {
+                break_write: false,
+                break_flush: true,
+                written: Vec::new(),
+            }
+        }
+    }
+
+    impl io::Write for Sink {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if self.break_write {
+                return Err(io::Error::other("No space left on device"));
+            }
+            self.written.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            if self.break_flush {
+                return Err(io::Error::other("disk I/O error"));
+            }
+            Ok(())
+        }
+    }
+
+    fn write_error(sink: &mut Sink) -> String {
+        write_to(sink, Path::new("cv.pdf"), b"%PDF-1.7")
+            .expect_err("a broken disk must fail the write")
+            .to_string()
+    }
+
+    #[test]
+    fn a_full_disk_names_the_destination_and_the_os_reason() {
+        let message = write_error(&mut Sink::full());
+        assert!(
+            message.contains("cv.pdf") && message.contains("No space left on device"),
+            "the user must see which file and why: {message}"
+        );
+    }
+
+    /// The bytes can leave the buffer only to be lost: a flush failure is the same
+    /// typed error, or the rename would publish a truncated PDF.
+    #[test]
+    fn a_failing_device_is_reported_at_the_flush() {
+        let message = write_error(&mut Sink::failing());
+        assert!(
+            message.contains("cv.pdf") && message.contains("disk I/O error"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_healthy_sink_receives_every_byte() {
+        let mut sink = Sink::working();
+        write_to(&mut sink, Path::new("cv.pdf"), b"%PDF-1.7 bytes").expect("the write works");
+        assert_eq!(sink.written, b"%PDF-1.7 bytes", "nothing lost or reordered");
+    }
 
     #[test]
     fn first_fit_line_reports_a_single_scale() {

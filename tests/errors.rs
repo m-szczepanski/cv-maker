@@ -9,8 +9,9 @@
 //! Error classes and where they are covered:
 //! - parse errors (unknown key, wrong type, bad color/length, missing required field,
 //!   malformed YAML, unknown section variant): this file.
-//! - semantic errors (bad font, bad URL, unknown template, bad schema version,
-//!   multi-error collection): this file.
+//! - semantic errors (bad font, bad URL, broken Markdown link URL, unknown template,
+//!   bad schema version, multi-error collection): this file.
+//! - diagnostics without a span (a value written as a YAML alias): this file.
 //! - warnings (duplicate title): this file.
 //! - I/O (missing file): this file.
 //! - write errors: `tests/build_examples.rs` (output is a directory).
@@ -18,6 +19,7 @@
 //! - custom template folder errors: `tests/custom_template.rs`.
 //! - unknown `--template` for `init`: `tests/init.rs`.
 //! - watch loop errors: `tests/watch.rs`.
+//! - Typst-special characters rendering literally, never executing: `tests/escaping.rs`.
 
 use std::fs;
 use std::path::PathBuf;
@@ -166,6 +168,114 @@ fn malformed_link_url_is_rejected() {
             "      - label: Site\n        url: github.com/me\n",
         ),
     );
+    assert!(!ok);
+    insta::assert_snapshot!(stderr);
+}
+
+/// A Markdown link with an empty target used to pass `cv check` and then fail
+/// `cv build` as a *template* error; the exporter really does refuse it, so `cv check`
+/// reports it as the user error it is (ADR-0033).
+#[test]
+fn an_empty_markdown_link_url_is_a_user_error() {
+    let (ok, _, stderr) = check_broken(
+        "markdown-url-empty",
+        concat!(
+            "schema: 1\ncv:\n  name: Jane Doe\n",
+            "  summary: My work is at [home]().\n",
+        ),
+    );
+    assert!(!ok, "the empty target must fail the check");
+    insta::assert_snapshot!(stderr);
+}
+
+/// A bare host renders as a link that goes nowhere but breaks nothing, so it warns
+/// rather than failing the build (ADR-0015, ADR-0033).
+#[test]
+fn a_bare_host_markdown_link_warns_but_still_builds() {
+    let dir = unique_dir("markdown-bare-host");
+    fs::write(
+        dir.join("cv.yaml"),
+        concat!(
+            "schema: 1\ncv:\n  name: Jane Doe\n",
+            "  summary: My work is at [lab](github.com/me/lab).\n",
+        ),
+    )
+    .expect("write cv.yaml");
+
+    let (ok, stdout, stderr) = run(dir.clone(), &["check", "cv.yaml"]);
+    assert!(ok, "a warning never fails the check: {stderr}");
+    assert!(
+        stdout.contains("(1 warning)"),
+        "the warning must be counted, got: {stdout}"
+    );
+    assert!(
+        stderr.contains("no PDF reader can open"),
+        "the warning says what is wrong: {stderr}"
+    );
+
+    let (ok, _, stderr) = run(dir, &["build", "cv.yaml"]);
+    assert!(ok, "the CV still builds: {stderr}");
+}
+
+/// `mailto:` is a link a PDF reader can act on, so it neither errors nor warns: the
+/// check must not be stricter than the renderer (ADR-0031, ADR-0033).
+#[test]
+fn a_mailto_markdown_link_validates_and_builds() {
+    let dir = unique_dir("markdown-mailto");
+    fs::write(
+        dir.join("cv.yaml"),
+        concat!(
+            "schema: 1\ncv:\n  name: Jane Doe\n",
+            "  summary: Write to [my inbox](mailto:jane@example.dev) or see the [site](https://example.dev).\n",
+        ),
+    )
+    .expect("write cv.yaml");
+
+    let (ok, stdout, stderr) = run(dir.clone(), &["check", "cv.yaml"]);
+    assert!(ok, "a mailto link is a working link: {stderr}");
+    assert!(
+        stdout.contains("(0 warnings)"),
+        "nothing to warn about, got: {stdout}"
+    );
+
+    let (ok, stdout, stderr) = run(dir.clone(), &["build", "cv.yaml"]);
+    assert!(ok, "the CV must build: {stderr}");
+    assert!(stdout.contains("1 page"), "got: {stdout}");
+}
+
+/// An unreadable font directory is one more thing wrong with the input, so it is
+/// reported with the rest instead of hiding them (spec §5: all errors of all checks).
+#[test]
+fn an_unreadable_font_directory_is_reported_with_the_other_errors() {
+    let dir = unique_dir("font-dir-collected");
+    fs::write(
+        dir.join("cv.yaml"),
+        concat!(
+            "schema: 2\ncv:\n  name: Jane Doe\n  contact:\n    links:\n",
+            "      - label: Site\n        url: github.com/me\n",
+        ),
+    )
+    .expect("write cv.yaml");
+
+    let (ok, _, stderr) = run(dir, &["--font-path", "no-such-fonts", "check", "cv.yaml"]);
+    assert!(!ok, "a bad font directory must fail the check");
+    for expected in [
+        "no-such-fonts",
+        "unsupported schema version 2",
+        "malformed URL \"github.com/me\"",
+    ] {
+        assert!(
+            stderr.contains(expected),
+            "`{expected}` must be reported alongside the others, got:\n{stderr}"
+        );
+    }
+}
+
+/// A value written as a YAML alias has no span of its own: the diagnostic names the
+/// resolved value without a snippet, instead of pointing at the wrong line (ADR-0036).
+#[test]
+fn an_aliased_bad_value_is_reported_without_a_snippet() {
+    let (ok, _, stderr) = check_broken("aliased-value", "cv:\n  name: &ver 2\nschema: *ver\n");
     assert!(!ok);
     insta::assert_snapshot!(stderr);
 }

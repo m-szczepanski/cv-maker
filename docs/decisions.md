@@ -518,14 +518,280 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   the watcher is alive) is unreachable from user input — it reports an internal
   error rather than silently exiting.
 
+## ADR-0030 — `classic` ships without rules (spec §6 amended, plan M6)
+
+- **Context:** The 5.8 visual review found the full-width `line()` rules — the header
+  rule and the per-section dividers — heavier than the built-ins should be: "templates
+  should be very clean, minimal and slick". Spec §6 described `classic` *as* having
+  them, so code and spec disagreed.
+- **Decision:** Delete both rules. Fixed the **spec** (§6 now describes `classic` as a
+  single-column layout with a right-aligned contact header and title-case accent
+  headings, no rules), the manifest description, and the CLI listing test. Hierarchy
+  now comes from type, colour and spacing alone: bold title-case accent headings,
+  semibold orgs, `section-gap` of air after the header. Both templates were re-rendered
+  and inspected (starter, `full`, and a 14×2 overflowing CV fitted to one page).
+- **Consequences:** `classic` and `compact` differ by header alignment, heading case and
+  weights rather than by rules; no schema, data-contract or fit-loop change, so the
+  built-in parity tests still hold.
+
+## ADR-0031 — font names match the way Typst matches them
+
+- **Context:** Audit finding. Typst 0.15.1 lowercases the selector before looking it up
+  in the font book (verified in the pinned source), so `design.fonts.body: inter`
+  renders Inter — while `cv check` rejected it as an unknown font. Validation was
+  *stricter* than rendering, contradicting ADR-0021's shared ground truth.
+- **Decision:** Compare family names case-insensitively in `check_fonts`. `cv fonts` and
+  the "did you mean" hints keep printing canonical names (they come from font metadata).
+  A test pins the consequence: `inter`/`INTER`/`jetbrains mono` validate and build
+  **byte-identical** PDFs to the canonical spellings, so case is a spelling, not a style.
+- **Consequences:** Input previously rejected is accepted and renders the intended font.
+  Genuinely missing families still error with a suggestion (spec §8: never a silent
+  fallback to a *different* family).
+
+## ADR-0032 — `--quiet` keeps Typst render warnings (ADR-0012 follow-through)
+
+- **Context:** ADR-0012 classifies warnings as essentials that `--quiet` must not
+  suppress, but `cv build` printed the render layer's warnings inside the `!quiet` block
+  — so a custom template's Typst warnings disappeared under `--quiet`. The comment
+  calling the loop "the reporting point for M5 custom templates" was also stale: M5
+  shipped and the loop is reached.
+- **Decision:** Move the render-warning loop out of the quiet guard, next to the
+  validation warnings. Corrected the comment. A test pins both halves: the warning
+  survives `--quiet`, and the success line does not.
+
+## ADR-0033 — Markdown link URLs are checked where they are written, and aliases keep spans honest
+
+- **Context:** Two audit findings. (1) `summary: see [work]()` passed `cv check` and then
+  failed `cv build` with **"template error: URL must not be empty"** — a user data mistake
+  reported as a template bug (spec §5 says those are distinct), and Typst genuinely
+  refuses an empty target. (2) The span scan ignored alias events, so a value written as
+  a YAML alias not only lost its own span but shifted every later sibling in that
+  mapping: diagnostics pointed at the wrong line.
+- **Decision:** (1) `check_markdown_urls` walks the parsed tokens of exactly the
+  Markdown-enabled fields (`Cv::markdown_texts`) and splits the severities the way the
+  renderer behaves: an **empty** target is an error (the export refuses it), a target no
+  PDF reader can open — bare host, path relative to the PDF, embedded whitespace — is a
+  **warning** (it renders, ADR-0015), and any absolute scheme (`https:`, `mailto:`,
+  `tel:`, `ftp:`) is accepted. `data.yaml` and the check must cover the same fields —
+  pinned by a drift test over the fixture in `src/render/data.rs`. (2) The span walker
+  treats an alias as a value that takes its frame slot without recording a span, so later
+  siblings stay aligned and a check that rejects an aliased value reports the resolved
+  value without a snippet — a real, tested path (`diag_at` is the single place that
+  decides labeled-or-plain).
+- **Consequences:** `cv check` predicts `cv build` for the case that actually breaks the
+  build; a `mailto:` CV keeps working (it did before M6 — an earlier draft of this ADR
+  applied the contact-link http(s)-only rule to Markdown links and that would have been a
+  silent breaking release, caught in review); contact links keep ADR-0017's stricter rule
+  on purpose, since they are the CV's primary routes to the candidate; one diagnostic
+  helper replaces six near-identical fallback ladders.
+
+## ADR-0034 — `render` never touches the file system; the command layer does
+
+- **Context:** `Engine::build` read the user font directories itself, so every build
+  read them twice (validation had already done it) and the render layer carried an I/O
+  error arm that no validated input can reach. Spec §9 wants the render layer to be a
+  pure compile step over its inputs.
+- **Decision:** `validate` reads the user font directories once and hands the bytes back
+  in `Outcome::Valid { font_items, .. }`, which `load_cv` passes to
+  `RenderRequest.user_font_items`; `src/render/` receives data, not paths. `Engine::build`
+  is infallible, and `book_families`/`to_yaml`/`schema_json` (which cannot fail for the
+  tool's own data) return values instead of `Result`, panicking with a stated invariant on
+  the impossible case (`.AGENTS.md` rule 14) rather than inventing user-facing errors.
+  A directory that cannot be read is reported **as a diagnostic among the other checks**
+  — an earlier draft returned the I/O error from `load_cv` before validation ran, which
+  hid every schema, template and URL problem in the same file behind one message and
+  broke spec §5's "all errors of all checks are collected" (caught in review).
+- **Consequences:** One font read per build, Typst types and file system policy still
+  confined to `src/render/` (spec §13.7), three unreachable error arms are gone, and a
+  CV with both a bad `font_paths` entry and other mistakes lists them together.
+
+## ADR-0035 — validation hands the resolved template to the build
+
+- **Context:** `cv build` loaded the template a second time after `load_cv` had already
+  validated the reference, so a custom folder was read twice per rebuild (watch rebuilds
+  every save) and the reload carried an error arm that validation had ruled out.
+- **Decision:** `validate` returns an `Outcome`: `Valid { template, warnings }` or
+  `Invalid(errors)`. `LoadedCv` carries the template, and the render uses exactly what
+  was judged. Errors are still collected before the decision (spec §5: all errors, not
+  the first), so a broken reference is reported alongside font and URL problems.
+- **Consequences:** One template read per build; "validated" and "rendered" are the same
+  object by construction; no unreachable fallback in the command layer.
+
+## ADR-0036 — unreachable-by-construction code is deleted, injected, or documented
+
+- **Context:** M2–M5 left a documented residue of defensive branches (rule 21) that
+  `cargo llvm-cov` reported as uncovered: impossible match arms, error mappings for
+  calls that cannot fail, and the whole of `cv watch`'s loop, which the e2e tests could
+  only reach by killing a child process — and a killed process cannot flush its
+  coverage profile.
+- **Decision:** Work through the list rather than keep documenting it. The impossible
+  arms are gone or became stated invariants (ADR-0034). `cv watch` is split into
+  `watch`/`Watch` with the event channel and the watcher creation injected, so the
+  initial build, one wake, the rebuild-equality decision, a refused registration and
+  the loop's exit are unit-tested in-process; the e2e tests keep killing a real child
+  because that is how a real watch ends. `assemble_builtin` is pure over its file list,
+  so broken embedded assets are testable with synthetic ones instead of being
+  "unreachable". `WatchFolders` is the seam for the two notify operations, because a
+  real backend only refuses a folder on OS watch slots.
+- **Consequences:** Measured coverage went from 96.67% lines at the end of M5 to
+  **100.00%** (functions 100.00%, regions 99.95%): every source line executes, and
+  `--show-missing-lines` reports nothing. The three regions still counted as missed are
+  accounting rather than untested behaviour: `write_atomic`'s `?` after the sink write
+  (the fault is injected at the seam, not by breaking the disk — its comment says so),
+  `cv templates`' `?` after collecting its built-ins (kept because a broken bundle should
+  be reported, not panicked — ADR-0042), and a numeric-literal sub-region inside
+  `fit.rs`'s floor guards, whose lines execute.
+  Test code no longer uses `unwrap_or_else(|| panic!(…))` forms whose failure paths
+  show up as uncovered either.
+
+## ADR-0037 — release binaries built locally with `cargo-zigbuild` (ADR-0013)
+
+- **Context:** ADR-0013 dropped CI, so M6's binaries have to come off a development
+  machine. This one is Apple silicon macOS with no Docker; the matrix needs Linux
+  x86-64/arm64, macOS x86-64/arm64 and Windows x86-64.
+- **Decision:** Dev tooling only, no crate dependencies added: `brew install zig` plus
+  `cargo install cargo-zigbuild`, then `scripts/build-release.sh` builds
+  `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`,
+  `aarch64-apple-darwin` and `x86_64-pc-windows-gnu` into `dist/` (gitignored) as
+  `cv-<version>-<triple>.tar.xz` / `.zip` with a `SHA256SUMS.txt`; each archive carries
+  the `LICENSE` next to the binary. `cv` is published by hand from that directory;
+  nothing is pushed automatically.
+- **Consequences:** Cross-compiled binaries are *built* but only the host
+  architecture can be *run* here — `scripts/fresh-machine-test.sh` runs the quick start
+  from an unpacked archive in an isolated `HOME` with a minimal `PATH` for the host
+  triple, and reports the others as structure-checked but not executed. Reproducing the
+  whole matrix on another machine needs zig, cargo-zigbuild and the rustup targets.
+  **Archives are reproducible** (verified by building the whole matrix twice and
+  comparing `SHA256SUMS.txt` byte-for-byte): members go in `LC_ALL=C` order with pinned
+  timestamps, because the first version hashed differently on every run even though the
+  binary inside was identical. The builder's uid/gid remains in the container, so
+  reproducibility holds per build host rather than across arbitrary machines — enough for
+  published checksums, and the reason `--sort`/`--mtime` tar flags were dropped (macOS's
+  bsdtar rejects them; the first "verified reproducible" claim here was wrong precisely
+  because that failed build left the old checksum file in place).
+  Which archives are runnable is decided by the **triple in the file name**, matched
+  against `scripts/release-targets`, never by trying to exec them. An earlier draft
+  treated any failed `--version` as "wrong architecture" and exited 0, so a corrupt or
+  Gatekeeper-blocked artifact — the exact failure this check exists to catch — passed the
+  acceptance test; and a name whose triple was not in the matrix skipped as "another
+  architecture" too. Now a host-triple artifact that will not run is a hard failure, an
+  unclassifiable name is refused, and `.zip` archives are unpacked with `unzip` so the
+  script works on Linux as well.
+- **Hardening round over those fixes** (found by re-reading the new code as an attacker
+  would): the triple was still matched as a *regex* built from the file name, and
+  `cv-1-aarch64.*darwin.tar.xz` matches the real triple `aarch64-apple-darwin` — the
+  silent skip again, one name away. It is a fixed-string whole-line match now
+  (`grep -qxs -F`); the first fix attempt even forgot the `-F`, which the probe battery
+  caught because the crafted file only failed later on its truncated bytes. The
+  `build-release.sh` target argument is compared as an exact string for the same reason
+  (a case pattern built from user input treats glob metacharacters as part of the
+  matrix), the checksum step fails loudly when no artifact was built (before: an
+  errexit abort or a hash of an empty stream, after the checksum file was already
+  deleted), and both scripts fall back from `shasum` to `sha256sum`, which makes the
+  Linux claim above true on machines without perl's `shasum`. The checksum block also
+  carried dead code from its first draft (`sed` normalizing `./` names it no longer
+  produced) — deleted.
+
+## ADR-0038 — tagged PDF 1.7, no PDF/A or PDF/UA validator (§14 closed)
+
+- **Context:** ADR-0009 turned tagged PDFs on and deferred the standards choice to M6.
+  Pinned `typst-pdf 0.15.1`: `PdfStandards::default()` is PDF **1.7** with no archival
+  or accessibility validator, `tagged: true` writes the structure tree, and
+  `PdfStandards::new(&[PdfStandard::A_1b | Ua_1])` would add a validator that can
+  *refuse* the export.
+- **Decision:** Keep PDF 1.7 + tagged, no PDF/A or PDF/UA conformance. Reasons: the
+  accessibility gain (structure tree, real selectable text, correct reading order,
+  embedded subsets) is already delivered by `tagged`; a validator can turn a CV that
+  renders today into a build failure, which is the wrong trade for a one-page document;
+  and PDF/A would force colour/annotation rules that Typst's own metadata (no
+  `InfoID` beyond a title/author-derived hash) does not need.
+- **Consequences:** The §14 question is closed. If a reviewer later wants
+  `PDF/UA-1`, it is a one-line change in `Engine::build` plus a decision about what the
+  tool does when the validator rejects a document.
+
+## ADR-0039 — one neutral `cv init` example, not role-tuned ones (§14 closed)
+
+- **Context:** §14 asked whether `cv init` should offer examples tuned for backend,
+  frontend or data roles.
+- **Decision:** One neutral example, now extended to show the fit knobs
+  (`fit_one_page`, `fit_floor`) so the starter demonstrates every section type and
+  every design group, which is what makes it usable as documentation and as the model's
+  end-to-end parse fixture (ADR-0011).
+- **Rationale:** Role variants multiply the embedded assets and the tests without
+  changing what the tool does: the difference between a backend and a design CV is the
+  *content*, which is the user's to write. `--template` already selects the layout, and
+  a role flag would be a second, overlapping way to pick one.
+- **Consequences:** §14 is fully closed: two questions decided in M1/M4, two closed
+  here, per-job variants still out of scope for v1 — nothing in the model blocks a
+  later `--variant` (`schema`/`cv`/`design` stay independent keys).
+
+## ADR-0040 — a PDF the exporter refuses is its own error class
+
+- **Context:** The audit assumed `typst_pdf::pdf` can only fail on "options misuse",
+  since our `PdfOptions` are constants. That is wrong (pinned 0.15.1 sources): the
+  exporter inspects the *document* while writing it — `src/attach.rs:30` rejects a
+  malformed `mime-type`, `src/convert.rs:462` an image it cannot encode, `src/link.rs`
+  and `PdfError::VersionMismatch` others. A custom template can call any Typst
+  function (spec §6 puts no whitelist on it), so a CV whose document compiles cleanly
+  can still be refused on the way out, and that was an untested, undocumented arm.
+- **Decision:** Keep it as `RenderError::Pdf` — a distinct class from a compile failure
+  (`Template`) and from a user data error (`Input`): the Typst source was valid, the
+  PDF was not. Two tests pin it: a unit test over `render()` and an e2e `cv build` on a
+  template that does `#pdf.attach("data.yaml", mime-type: "not a mime type")`, asserting
+  exit 1, "PDF export failed", the exporter's own reason, and no PDF left behind.
+  Related guarantee, same audit: the atomic write now *flushes before it renames*,
+  because a buffered sink would otherwise let a truncated PDF be published — which is
+  exactly what spec §3 forbids.
+- **Consequences:** `src/render/` no longer claims an impossibility it cannot keep; the
+  last unreachable-by-assumption arm in the render layer is a tested error class; a
+  template author gets the exporter's message rather than a mystery.
+
+## ADR-0041 — a hung-up reader stops the writing, on both streams (spec §3)
+
+- **Context:** M6 made `cv fonts | head -1` exit 0 instead of panicking, but only for
+  stdout (`out_line`). Review found the same crash on the far more common stderr path:
+  `cv check broken.yaml 2>&1 | head -1` panics (exit 101) as soon as the report is larger
+  than the ~64 KB pipe buffer — a file with 300 duplicate titles writes 157 KB — because
+  Rust ignores `SIGPIPE` and `eprint!` turns the resulting `EPIPE` into a panic. The
+  affected sites were every diagnostic writer: `report_warnings`, `report_overflow`, the
+  fatal report in `main`, `cv watch`'s per-build report and its folder-watch warning, and
+  the `--verbose` line. `err_line` existed but was used in two places.
+- **Decision:** Every byte the CLI writes to a stream goes through the best-effort
+  helpers in `src/commands/mod.rs` — `out_line`, `err_line`, and a new `err_text` for
+  pre-rendered multi-line reports — and no `print!`/`eprint!` remains in `src/` outside
+  test code. Hanging up is the reader's choice, not an error to report and never a crash;
+  the exit code still reflects the command's own result. Pinned by two e2e tests that run
+  a real pipeline: the listing (stdout) and a 157 KB diagnostic stream (stderr).
+- **Consequences:** `cv | head`, `cv | grep`, and editors that kill the reader mid-report
+  behave; the panic cannot come back silently, because both streams have a test.
+
+## ADR-0042 — only loadable folders are built-in names
+
+- **Context:** Closing a coverage gap first made `cv templates` call
+  `load_builtin(name).expect("a listed built-in loads")`. Review pointed out that
+  `builtin_names()` returned *every* folder embedded under `templates/`, so the
+  invariant behind that `expect` was only held by the parity tests: a stray folder
+  (`templates/shared/`, a half-added template) would turn a listing command into a panic.
+- **Decision:** One predicate says what a built-in is — `has_entry_point`, a
+  `template.typ` at the folder root — and both `builtin_names()` and `load_builtin` use
+  it: a folder without an entry point is not a template, so it is neither listed nor
+  offered as a did-you-mean, and asking for it by name gives the user-facing
+  `unknown template` error with the real built-ins listed. `cv templates` keeps the typed
+  error path for a bundle that *is* a template but fails to load (undecodable source,
+  unusable manifest), reported as `internal error: built-in template 'x' … (this is a bug
+  in cv)`.
+- **Consequences:** No panic reachable from the shipped asset tree's shape; the cost is
+  one never-taken error continuation in `cv templates`, which is the accepted trade over
+  a crash (`.AGENTS.md` rule 21 prefers the typed report).
 ## Open questions (spec §14) — status
 
-Assigned to milestones per the implementation plan; each gets an ADR when resolved.
+All closed as of M6; each carries the ADR that resolved it.
 
 | Question | Status |
 |---|---|
-| Inline Markdown: tool-structured vs. Typst helper | **decided in M1 (ADR-0008): tool-structured; M1 ships plain text** |
+| Inline Markdown: tool-structured vs. Typst helper | **decided in M1 (ADR-0008), implemented in M2 (ADR-0016): tool-structured flat tokens in `data.yaml`** |
 | Exit code when content can't fit at the floor | **decided in M4 (ADR-0026): 0 with a loud warning** |
-| Tagged PDF / accessibility support in pinned `typst-pdf` | **checked in M1 (ADR-0009): tagged PDFs on; standards finalized M6** |
-| `cv init` role-tuned examples vs. one neutral example | open — decide in M6 (step 6.2) |
-| Per-job variants (`--variant`) | out of scope for v1; keep model extensible |
+| Tagged PDF / accessibility support in pinned `typst-pdf` | **closed in M6 (ADR-0009 + ADR-0038): tagged PDF 1.7, no PDF/A or PDF/UA validator** |
+| `cv init` role-tuned examples vs. one neutral example | **closed in M6 (ADR-0039): one neutral example, now showing the fit knobs** |
+| Per-job variants (`--variant`) | **out of scope for v1; nothing in the model blocks it (ADR-0039)** |
+

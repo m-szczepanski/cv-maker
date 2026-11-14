@@ -62,6 +62,16 @@ fn init_then_build_produces_one_page_pdf_with_expected_text() {
         text.contains("Cut p99 latency by 40%"),
         "bullet must be extractable, got: {text}"
     );
+
+    // Spec §8: the PDF embeds its fonts (subsetted), so it renders the same elsewhere.
+    // The starter asks for Inter, so the embedded subset names it.
+    assert!(
+        fs::read(&pdf_path)
+            .expect("read PDF")
+            .windows(b"Inter".len())
+            .any(|w| w == b"Inter"),
+        "the bundled font must be embedded in the PDF"
+    );
 }
 
 /// 1.7.2: two builds of the same input produce byte-identical PDFs.

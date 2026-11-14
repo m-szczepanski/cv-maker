@@ -244,11 +244,14 @@ pub fn page_name(page: Page) -> String {
 }
 
 /// Serialize the data file to a YAML string (deterministic: struct field order).
-pub fn to_yaml(cv: &Cv, design: &Design) -> crate::error::Result<String> {
-    // Serialization of our own structs cannot fail by construction; if it ever does,
-    // that is a bug, hence Internal.
+///
+/// Our own structs always serialize — every field is a string, a float, or a sequence of
+/// those, and `serde_yaml_ng` writes non-finite floats as `.nan`/`.inf` rather than
+/// failing (a nonsense `design.fit_floor.min_scale` reaches here that way, and
+/// `FitConfig::from_design` is what contains it). An error would be a `cv` bug (rule 14).
+pub fn to_yaml(cv: &Cv, design: &Design) -> String {
     serde_yaml_ng::to_string(&DataFile::new(cv, design))
-        .map_err(|e| crate::error::Error::Internal(format!("could not serialize data file: {e}")))
+        .expect("the template-facing data file always serializes")
 }
 
 #[cfg(test)]
@@ -287,9 +290,9 @@ mod tests {
     );
 
     #[test]
-    fn markdown_fields_serialize_as_token_lists() -> crate::error::Result<()> {
-        let doc = Document::from_yaml_str(SOURCE)?;
-        let yaml = to_yaml(&doc.cv, &doc.design)?;
+    fn markdown_fields_serialize_as_token_lists() {
+        let doc = Document::from_yaml_str(SOURCE).expect("fixture parses");
+        let yaml = to_yaml(&doc.cv, &doc.design);
 
         assert!(
             yaml.contains("kind: bold") && yaml.contains("text: engineer"),
@@ -307,24 +310,22 @@ mod tests {
             yaml.contains("text: plain bullet"),
             "plain bullet must still be a text token, got:\n{yaml}"
         );
-        Ok(())
     }
 
     #[test]
-    fn links_in_markdown_serialize_with_url() -> crate::error::Result<()> {
-        let doc = Document::from_yaml_str(SOURCE)?;
-        let yaml = to_yaml(&doc.cv, &doc.design)?;
+    fn links_in_markdown_serialize_with_url() {
+        let doc = Document::from_yaml_str(SOURCE).expect("fixture parses");
+        let yaml = to_yaml(&doc.cv, &doc.design);
         assert!(
             yaml.contains("kind: link") && yaml.contains("url: https://acme.dev"),
             "link token with url expected, got:\n{yaml}"
         );
-        Ok(())
     }
 
     #[test]
-    fn non_markdown_fields_stay_literal_strings() -> crate::error::Result<()> {
-        let doc = Document::from_yaml_str(SOURCE)?;
-        let yaml = to_yaml(&doc.cv, &doc.design)?;
+    fn non_markdown_fields_stay_literal_strings() {
+        let doc = Document::from_yaml_str(SOURCE).expect("fixture parses");
+        let yaml = to_yaml(&doc.cv, &doc.design);
         assert!(
             yaml.contains("title: Work"),
             "titles stay plain, got:\n{yaml}"
@@ -335,14 +336,39 @@ mod tests {
         );
         assert!(yaml.contains("key: Rust"), "keys stay plain");
         assert!(yaml.contains("value: strong"), "values stay plain");
-        Ok(())
     }
 
     #[test]
-    fn page_serializes_as_its_lowercase_name() -> crate::error::Result<()> {
-        let doc = Document::from_yaml_str("schema: 1\ncv:\n  name: X\ndesign:\n  page: letter\n")?;
-        let yaml = to_yaml(&doc.cv, &doc.design)?;
+    fn page_serializes_as_its_lowercase_name() {
+        let doc = Document::parse_yaml("schema: 1\ncv:\n  name: X\ndesign:\n  page: letter\n")
+            .expect("fixture parses");
+        let yaml = to_yaml(&doc.cv, &doc.design);
         assert!(yaml.contains("page: letter"), "got:\n{yaml}");
-        Ok(())
+    }
+
+    /// The set of fields the tool parses into inline-Markdown tokens is a contract:
+    /// `data.yaml` carries token lists for exactly the fields
+    /// [`crate::model::Cv::markdown_texts`] names, so the Markdown URL check and the
+    /// template-facing data can never cover different fields (ADR-0016, ADR-0033).
+    #[test]
+    fn the_tokenized_fields_are_exactly_the_ones_markdown_texts_lists() {
+        let doc = Document::parse_yaml(SOURCE).expect("fixture parses");
+        let paths: Vec<String> = doc
+            .cv
+            .markdown_texts()
+            .iter()
+            .map(|field| field.span_path.clone())
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "cv.summary",
+                "cv.sections[0].items[0].bullets[0]",
+                "cv.sections[0].items[0].bullets[1]",
+                "cv.sections[2].items[0]",
+                "cv.sections[3].items[0]",
+            ],
+            "summary, entry bullets, and the items of the bullets and text sections"
+        );
     }
 }

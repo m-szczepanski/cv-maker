@@ -1,11 +1,13 @@
 # yaml-language-server: $schema=./cv.schema.json
 # Full example: every v1 content and design field, including the inline Markdown subset
-# (`**bold**`, `*italic*`, `` `code` ``, `[label](url)`).
+# (`**bold**`, `*italic*`, `` `code` ``, `[label](url)`) in the fields that carry it:
+# summary, entry bullets, and the items of `bullets` and `text` sections. Headings,
+# orgs, dates, keys and titles render as literal text.
 schema: 1
 
 cv:
   name: Jane Doe
-  headline: Staff **engineer** with *shipped products*
+  headline: Staff Software Engineer
   location: Berlin, Germany
   contact:
     email: jane@example.dev

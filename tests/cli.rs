@@ -104,7 +104,7 @@ fn templates_lists_builtins_with_descriptions() {
         "compact's manifest description must show, got:\n{stdout}"
     );
     assert!(
-        stdout.contains("Conventional layout"),
+        stdout.contains("Conventional single-column"),
         "classic's manifest description must show, got:\n{stdout}"
     );
 }
@@ -125,6 +125,80 @@ fn templates_listing_survives_quiet() {
 }
 
 /// Plan 2.3: `cv schema` prints the derived JSON Schema and succeeds.
+/// Piping a listing is normal use: the reader hangs up after the first line, the tool
+/// stops writing and succeeds — it must not panic on the closed pipe.
+#[test]
+#[cfg(unix)]
+fn a_closed_reader_ends_the_listing_quietly() {
+    let bin = env!("CARGO_BIN_EXE_cv").replace('\'', "'\\''");
+    let output = Command::new("bash")
+        .args([
+            "-o",
+            "pipefail",
+            "-c",
+            &format!("'{bin}' fonts | head -n 1 > /dev/null"),
+        ])
+        .output()
+        .expect("bash runs");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "the pipeline must succeed, stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("panicked"),
+        "a hung-up reader is not a crash: {stderr}"
+    );
+}
+
+/// Diagnostics go to stderr, so the same hung-up reader has to be survived there: a file
+/// with many problems writes more than the 64 KB pipe buffer, and a plain `eprint!` turns
+/// that into a panic on the closed pipe.
+#[test]
+#[cfg(unix)]
+fn a_closed_reader_does_not_panic_on_diagnostics() {
+    let dir = std::env::temp_dir().join(format!("cv-test-pipe-diagnostics-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create test dir");
+
+    // 300 titles used twice each: 300 warnings, well over one pipe buffer.
+    let mut yaml = String::from("schema: 1\ncv:\n  name: Jane Doe\n  sections:\n");
+    for index in 0..300 {
+        for _ in 0..2 {
+            yaml.push_str(&format!(
+                "    - title: Section number {index} with a long enough title\n      type: bullets\n      items: [x]\n"
+            ));
+        }
+    }
+    let yaml_path = dir.join("cv.yaml");
+    std::fs::write(&yaml_path, yaml).expect("write cv.yaml");
+
+    let bin = env!("CARGO_BIN_EXE_cv");
+    let output = Command::new("bash")
+        .args([
+            "-o",
+            "pipefail",
+            "-c",
+            &format!(
+                "'{bin}' check '{}' 2>&1 | head -n 1 > /dev/null",
+                yaml_path.display()
+            ),
+        ])
+        .output()
+        .expect("bash runs");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        output.status.success(),
+        "a reader that hung up is not a crash, stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("panicked"),
+        "writing must stop instead of panicking: {stderr}"
+    );
+}
+
 #[test]
 fn schema_prints_derived_json_schema() {
     let output = cv().arg("schema").output().expect("binary runs");

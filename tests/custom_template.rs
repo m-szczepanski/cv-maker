@@ -1,9 +1,9 @@
-//! M5 custom-template tests (plan 5.3/5.4/5.7, spec §6).
+//! Custom-template tests (spec §6, ADR-0027/0028).
 //!
 //! The acceptance scenario: a user copies a built-in template folder, edits it, and
-//! uses it via `design.template: ./my-template`. Every user-facing template-load
-//! error class (ADR-0027) and the manifest consistency warnings (ADR-0028) get a
-//! test here, per spec §13.9.
+//! uses it via `design.template: ./my-template`. Every user-facing error class a
+//! custom template can produce (folder, manifest, entry point, and a PDF the exporter
+//! refuses) plus the manifest consistency warnings get a test here (spec §13.9).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -292,6 +292,52 @@ fn non_utf8_template_source_is_a_clear_error() {
     );
 }
 
+/// The manifest is read through the same decoder: an undecodable `manifest.yaml`
+/// names itself, not the entry point.
+#[test]
+fn non_utf8_manifest_is_a_clear_error() {
+    let dir = unique_dir("custom-non-utf8-manifest");
+    fs::create_dir(dir.join("my-template")).expect("create folder");
+    fs::write(dir.join("my-template/template.typ"), "#let a = 1\n").expect("write source");
+    fs::write(dir.join("my-template/manifest.yaml"), [0xffu8, 0x28, 0x61])
+        .expect("write invalid manifest bytes");
+    write_cv(&dir, "./my-template");
+    let (ok, out) = run_cv(&dir, &["build"]);
+    assert!(!ok, "an undecodable manifest must fail: {out}");
+    assert!(
+        out.contains("UTF-8") && out.contains("manifest.yaml"),
+        "the error must name the file and the encoding: {out}"
+    );
+}
+
+/// A template that compiles but whose PDF the exporter refuses is reported as an
+/// export error, not a user error, and writes nothing (spec §3, §5).
+#[test]
+fn a_refused_pdf_export_is_reported_as_an_export_error() {
+    let dir = unique_dir("custom-export-fail");
+    make_folder(
+        &dir.join("my-template"),
+        &[
+            (
+                "template.typ",
+                "#pdf.attach(\"data.yaml\", mime-type: \"not a mime type\")\n#let d = yaml(\"data.yaml\")\n#d.cv.name\n",
+            ),
+            ("manifest.yaml", &manifest(&[])),
+        ],
+    );
+    write_cv(&dir, "./my-template");
+    let (ok, out) = run_cv(&dir, &["build", "--output", "out.pdf"]);
+    assert!(!ok, "a refused export must fail the build: {out}");
+    assert!(
+        out.contains("PDF export failed") && out.contains("mime type"),
+        "the exporter's reason reaches the user: {out}"
+    );
+    assert!(
+        !dir.join("out.pdf").exists(),
+        "a refused export leaves no PDF behind"
+    );
+}
+
 /// Unreadable folder files surface as typed I/O errors naming the file (same
 /// class as the `--font-path` and init disk-fault tests; POSIX permission model).
 #[test]
@@ -333,6 +379,35 @@ fn an_unreadable_template_source_reports_a_typed_io_error() {
     assert!(
         out.contains("could not read") && out.contains("template.typ"),
         "a typed I/O error naming the file: {out}"
+    );
+}
+
+/// An unlistable subdirectory is the same fault class one level down: the folder
+/// walk reports `Error::Io` naming it instead of skipping the sources silently.
+#[test]
+fn an_unreadable_template_subdirectory_reports_a_typed_io_error() {
+    let dir = unique_dir("custom-unreadable-subdir");
+    make_folder(
+        &dir.join("my-template"),
+        &[
+            ("template.typ", SIMPLE_TYP),
+            ("manifest.yaml", &manifest(&[])),
+            ("lib/inline.typ", "#let inline(x) = x\n"),
+        ],
+    );
+    write_cv(&dir, "./my-template");
+
+    use std::os::unix::fs::PermissionsExt;
+    let lib = dir.join("my-template/lib");
+    fs::set_permissions(&lib, fs::Permissions::from_mode(0o000)).expect("chmod 000 dir");
+    let result = run_cv(&dir, &["build"]);
+    fs::set_permissions(&lib, fs::Permissions::from_mode(0o755)).expect("chmod back");
+
+    let (ok, out) = result;
+    assert!(!ok, "an unlistable directory must fail: {out}");
+    assert!(
+        out.contains("could not read") && out.contains("lib"),
+        "a typed I/O error naming the directory: {out}"
     );
 }
 
@@ -534,5 +609,33 @@ fn typst_warnings_from_custom_templates_reach_the_user() {
     assert!(
         out.contains("warning:") && out.contains("`show page` is not supported"),
         "the Typst warning must be reported: {out}"
+    );
+}
+
+/// ADR-0032: the warning is an essential (ADR-0012), so `--quiet` drops the result
+/// line but keeps it.
+#[test]
+fn quiet_still_reports_typst_warnings() {
+    let dir = unique_dir("custom-warn-quiet");
+    make_folder(
+        &dir.join("my-template"),
+        &[
+            (
+                "template.typ",
+                "#show page: it => it\n#let d = yaml(\"data.yaml\")\n#d.cv.name\n",
+            ),
+            ("manifest.yaml", &manifest(&[])),
+        ],
+    );
+    write_cv(&dir, "./my-template");
+    let (ok, out) = run_cv(&dir, &["--quiet", "build"]);
+    assert!(ok, "warnings never fail: {out}");
+    assert!(
+        out.contains("warning:") && out.contains("`show page` is not supported"),
+        "the Typst warning must survive --quiet: {out}"
+    );
+    assert!(
+        !out.contains(".pdf"),
+        "the success line is progress and must be gone: {out}"
     );
 }
