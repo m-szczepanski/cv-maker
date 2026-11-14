@@ -783,6 +783,33 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
 - **Consequences:** No panic reachable from the shipped asset tree's shape; the cost is
   one never-taken error continuation in `cv templates`, which is the accepted trade over
   a crash (`.AGENTS.md` rule 21 prefers the typed report).
+
+## ADR-0043 — `design.pages`: the fit loop targets a user-chosen page count
+
+- **Context:** The spec's v1 non-goal said "no multi-page CVs. One page is the product."
+  After the release the project owner asked for the target to be configurable: default 1,
+  user-selectable otherwise. The fit loop (§7), the overflow warning, and the templates
+  all hard-coded the one-page assumption (`fits()` compared `page_count <= 1`, overflow
+  runs counted past page 1).
+- **Decision:** A new design field, `pages` (the owner picked the name over
+  `page_count`/`max_pages`; `design.page` remains the page *size*). It is a
+  `NonZeroU32` with default 1, so `pages: 0` is a parse error naming the field and the
+  line, and the derived JSON Schema carries `minimum: 1` — no hand-written validation.
+  The field is a *target*, not a quota: the fit loop (§7) tightens spacing, margins, and
+  fonts until the document fits within `pages` pages, with the same floors, the same
+  13-compile budget, and the same determinism as before; overflow is measured against
+  the target (`page_count - pages` extra pages), and the warning now suggests raising
+  `design.pages` alongside cutting content and relaxing `fit_floor`. There is no CLI
+  flag: `--no-fit` and `fit_one_page` remain the loop's opt-outs, and `pages` belongs to
+  the file like every other design field. Templates need no change — Typst paginates
+  naturally, and the field reaches them through `data.yaml` (`design.pages`) like the
+  other tool-level design values.
+- **Consequences:** The non-goal in spec §1 is revised rather than kept (recorded there);
+  `fit_one_page` keeps its name as the loop's on/off switch even when the target is not
+  one page. One template-behavior caveat surfaced during testing: a built-in template's
+  section block is unbreakable, so one enormous section lays out as an overflowing page
+  rather than splitting — multi-page CVs should use several sections; this is
+  pre-existing layout behavior, not part of this change.
 ## Open questions (spec §14) — status
 
 All closed as of M6; each carries the ADR that resolved it.

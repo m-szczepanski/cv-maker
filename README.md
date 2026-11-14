@@ -1,6 +1,7 @@
 # cv — your CV as code, one page as PDF
 
-`cv` keeps a CV in one plain-text YAML file and renders a clean, one-page PDF from it.
+`cv` keeps a CV in one plain-text YAML file and renders a clean, one-page PDF from it —
+or a two-page one, if that is what you ask for (see [Fitting](#fitting-to-your-page-count)).
 No web app, no account, no upload: one binary that you can put in a repo next to the
 source, diff, and rebuild in a second.
 
@@ -17,8 +18,9 @@ cv.pdf  1 page  fit: scale 1.00  (218 ms)
 
 **What you get**
 
-- **Guaranteed one page.** If your content does not fit, `cv` quietly tightens spacing
-  and type until it does, and tells you what it applied.
+- **Guaranteed fit.** If your content does not fit one page, `cv` quietly tightens
+  spacing and type until it does — or until it fits the page count you set — and tells
+  you what it applied.
 - **Everything in the file.** Fonts, margins, sizes, spacing, colours and the template
   live in a `design:` block in the same YAML — no separate theme files.
 - **Text you can select and copy.** Real text, not an image: selectable, searchable,
@@ -183,17 +185,25 @@ Global:
 
 ---
 
-## Making it fit on one page
+## Fitting to your page count
 
-One page is the point. When the first render is too long, `cv` tightens spacing and
-margins first, then reduces type size, and stops at the first setting that fits — so
-your CV uses the largest, roomiest layout it can.
+One page is the default, and it is a target, not a ceiling you work around: when the
+first render is too long, `cv` tightens spacing and margins first, then reduces type
+size, and stops at the first setting that fits — so your CV uses the largest, roomiest
+layout it can. If you want a longer CV, set the target and the same loop works toward
+it, only tightening when the content exceeds *both* pages:
+
+```yaml
+design:
+  pages: 2                # the page count to fit into; default 1
+```
 
 The last line of `cv build` says what happened:
 
 ```
 cv.pdf  1 page  fit: scale 1.00  (218 ms)                        # already fit
 cv.pdf  1 page  fit: scale 0.94 spacing 0.71 margins 0.86  (262 ms)  # tightened to fit
+cv.pdf  2 pages  fit: scale 1.00  (231 ms)                       # fits its 2-page target
 ```
 
 You control how far it may go:
@@ -207,12 +217,13 @@ design:
 ```
 
 If even the smallest allowed layout does not fit, you still get the PDF, plus a warning
-saying how much spilled and what to cut — and `cv` still exits 0, because you asked for
-a document and got one:
+saying how much spilled past your `pages` target and what to change — and `cv` still
+exits 0, because you asked for a document and got one:
 
 ```
-⚠ content still overflows at the fit floor: about 14 lines spill onto 2 extra page(s);
-  cut content (e.g. bullets or paragraphs) or relax design.fit_floor / margins
+⚠ content still overflows at the fit floor: about 14 lines spill onto 1 extra page(s);
+  cut content (e.g. bullets or paragraphs), raise design.pages, or relax
+  design.fit_floor / margins
 ```
 
 ---
