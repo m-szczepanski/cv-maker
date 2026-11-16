@@ -43,8 +43,8 @@ pub enum Command {
     Watch(WatchArgs),
     /// Validate a YAML file without producing a PDF.
     Check(CheckArgs),
-    /// List the built-in templates with one-line descriptions.
-    Templates,
+    /// List the built-in templates with one-line descriptions, or extract one to edit.
+    Templates(TemplatesArgs),
     /// Print the JSON Schema of the file format to stdout.
     Schema,
     /// List the fonts the tool can use: bundled, `--font-path` and system.
@@ -99,6 +99,23 @@ pub struct CheckArgs {
     pub file: PathBuf,
 }
 
+/// `cv templates` arguments.
+#[derive(Args, Debug)]
+pub struct TemplatesArgs {
+    /// Write a built-in template's folder to disk so it can be edited and used as a
+    /// custom template (`design.template: ./<dir>`).
+    #[arg(long, value_name = "NAME")]
+    pub extract: Option<String>,
+
+    /// Directory to extract into (default: `./<NAME>`).
+    #[arg(long, value_name = "DIR", requires = "extract")]
+    pub out: Option<PathBuf>,
+
+    /// Overwrite files already in the extract directory.
+    #[arg(long, requires = "extract")]
+    pub force: bool,
+}
+
 /// Dispatch a parsed CLI to its command handler. Errors are returned typed; rendering
 /// happens in `main` (miette graphical output for input diagnostics, ADR-0018).
 pub fn run(cli: Cli) -> crate::error::Result<()> {
@@ -114,7 +131,7 @@ pub fn run(cli: Cli) -> crate::error::Result<()> {
         Command::Build(args) => commands::build::run(args, &cli),
         Command::Watch(args) => commands::watch::run(args, &cli),
         Command::Check(args) => commands::check::run(args, &cli.font_path),
-        Command::Templates => commands::templates::run(),
+        Command::Templates(args) => commands::templates::run(args),
         Command::Schema => commands::schema::run(),
         Command::Fonts => commands::fonts::run(&cli.font_path),
     }

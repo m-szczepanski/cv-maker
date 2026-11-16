@@ -61,6 +61,10 @@ tempfile = "3"
 pdf-extract = "0.12"
 # Snapshot tests for error output and the JSON Schema (spec §11, plan 2.7/2.8).
 insta = "1"
+# Inflate PDF content streams in the layout-geometry regression tests (tests/geometry.rs);
+# already in the tree transitively via the typst/pdf-extract chain, declared here so the
+# tests can assert drawn rectangles (page backgrounds and bands) against their coordinates.
+flate2 = "1"
 
 [profile.release]
 # Deterministic, reproducible release binaries.

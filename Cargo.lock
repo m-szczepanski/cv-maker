@@ -642,6 +642,7 @@ name = "cv"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "flate2",
  "include_dir",
  "insta",
  "miette",

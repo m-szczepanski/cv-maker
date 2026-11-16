@@ -568,13 +568,19 @@ mod tests {
             1 + MAX_PHASE_PROBES + 1,
             "identity + fill grid + the cap probe"
         );
+        // The scale snapshot is taken before the assert, and the failure message is
+        // written out to a local: a capture inside the assert macro's panic branch
+        // would create an always-zero line record of its own and pull the file's
+        // llvm-cov line metric below 100% for an artefact, not untested behaviour.
+        let sc: Vec<(f64, f64)> = probes
+            .borrow()
+            .iter()
+            .map(|p| (p.font_scale, p.margin_scale))
+            .collect();
+        assert!(sc.iter().all(|&(f, _)| f == 1.0));
         assert!(
-            probes
-                .borrow()
-                .iter()
-                .all(|p| p.font_scale == 1.0 && p.margin_scale == 1.0),
-            "only spacing moves: {:?}",
-            probes.borrow()
+            sc.iter().all(|&(_, m)| m == 1.0),
+            "only spacing moves: {sc:?}"
         );
     }
 
@@ -587,13 +593,11 @@ mod tests {
             target_pages: 2,
             ..default_config(true)
         };
-        let outcome = session_growing_with_spacing(
-            &config,
-            |s| if s <= FILL_MAX_SCALE { 1 } else { 3 },
-            probes.clone(),
-        )
-        .run()
-        .expect("fake compile never fails");
+        // The margin test at the end: every page count fits, every compile succeeds;
+        // the oracle is constant by design (a branching one left a dead arm here).
+        let outcome = session_growing_with_spacing(&config, |_s| 1, probes.clone())
+            .run()
+            .expect("fake compile never fails");
         assert_eq!(
             outcome.applied,
             FitParams {
@@ -760,6 +764,61 @@ mod tests {
             .run()
             .expect_err("the font-stage failure must escape");
         assert!(error.to_string().contains("font 1.125"), "got: {error}");
+    }
+
+    #[test]
+    fn a_compile_error_at_the_fill_cap_probe_propagates() {
+        // The grid fits everywhere; only the stage's own cap probe breaks — the
+        // dedicated `probe(cap)?` after the search (the search never probes the cap,
+        // so nothing else reaches it).
+        let config = FitConfig {
+            target_pages: 2,
+            ..default_config(true)
+        };
+        let mut session = Session::new(&config, |params| {
+            if (params.spacing_scale - FILL_MAX_SCALE).abs() < 1e-12 {
+                Err(RenderError::Template {
+                    message: "boom at the spacing cap".into(),
+                })
+            } else {
+                Ok(output(2))
+            }
+        });
+        let error = session
+            .run()
+            .expect_err("the cap-probe failure must escape");
+        assert!(error.to_string().contains("spacing cap"), "got: {error}");
+        assert_eq!(
+            session.compiles,
+            1 + MAX_PHASE_PROBES + 1,
+            "identity + the grid + the cap probe that broke"
+        );
+    }
+
+    #[test]
+    fn a_compile_error_in_the_margin_fill_stage_propagates() {
+        // Both earlier stages cap out fine; the template breaks as soon as the
+        // margin stage moves margins.
+        let config = FitConfig {
+            target_pages: 2,
+            ..default_config(true)
+        };
+        let mut session = Session::new(&config, |params| {
+            if params.margin_scale > 1.0
+                && params.spacing_scale >= FILL_MAX_SCALE
+                && params.font_scale >= FILL_MAX_FONT_SCALE
+            {
+                Err(RenderError::Template {
+                    message: format!("boom at margin {}", params.margin_scale),
+                })
+            } else {
+                Ok(output(2))
+            }
+        });
+        let error = session
+            .run()
+            .expect_err("the margin-stage failure must escape");
+        assert!(error.to_string().contains("boom at margin"), "got: {error}");
     }
 
     #[test]
