@@ -93,7 +93,7 @@ fn templates_lists_builtins_with_descriptions() {
     let output = cv().args(["templates"]).output().expect("binary runs");
     assert!(output.status.success(), "cv templates must succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    for name in ["compact", "classic"] {
+    for name in ["compact", "classic", "sidebar", "modern", "diy"] {
         assert!(
             stdout.lines().any(|line| line.starts_with(name)),
             "listing must have a line starting with '{name}', got:\n{stdout}"
@@ -106,6 +106,26 @@ fn templates_lists_builtins_with_descriptions() {
     assert!(
         stdout.contains("Conventional single-column"),
         "classic's manifest description must show, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("tinted left rail"),
+        "sidebar's manifest description must show, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("accent header band"),
+        "modern's manifest description must show, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Configurable layout engine"),
+        "diy's manifest description must show, got:\n{stdout}"
+    );
+    assert_eq!(
+        stdout
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count(),
+        5,
+        "exactly the five built-ins are listed, got:\n{stdout}"
     );
 }
 

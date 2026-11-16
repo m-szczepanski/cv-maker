@@ -89,7 +89,7 @@ Binary name: `cv`.
 | `cv build [<file>]` | Builds `<file>` (default `cv.yaml`). Writes `<file-stem>.pdf` **in the same directory as the input file**. Exit code 0 on success, non-zero on any error. |
 | `cv watch [<file>]` | Rebuilds on change of the YAML or its custom template files. Prints the result of each build. |
 | `cv check [<file>]` | Validates only. No PDF written. |
-| `cv templates` | Lists built-in templates with one-line descriptions. |
+| `cv templates [--extract <name>] [--out <dir>] [--force]` | Lists built-in templates with one-line descriptions. `--extract` writes a built-in's folder to disk for editing and use via `design.template`. |
 | `cv schema` | Prints the JSON Schema to stdout. |
 | `cv fonts` | Lists fonts available to the tool (bundled and discovered). |
 
@@ -260,9 +260,20 @@ templates/<name>/
 2. `classic`: conventional single-column layout — name with the contact block on the
    right, title-case accent headings. No rules or dividers (ADR-0030): the built-ins are
    clean, minimal and slick, and hierarchy comes from type, color and spacing.
-3. (Optional) `sidebar`: narrow left column for skills and contact.
+3. `sidebar`: two columns — a tinted left rail (its color bled to the page's left edge
+   via `page(background)`, pinned with an explicit `align` because marginals lay out
+   centered) carries name, contact and the short sections; the main column
+   carries the summary and the narrative ones. Routing to the rail is by section type
+   (`key_values`/`bullets`), which keeps the content schema flag-free (ADR-0048).
+4. `modern`: a solid accent header panel over the body measure (name and headline left,
+   contact stacked right) above the clean single-column body.
+5. `diy`: one engine whose structure is chosen in `config.typ` beside it — layout
+   (single / sidebar left / right), header style and alignment, contact placement,
+   heading case and decoration, date placement, justification (ADR-0048). Its defaults
+   render a clean single-column CV in the house style. Bad knob values fail the compile
+   with the knob named.
 
-Both built-ins follow two page-layout rules (ADR-0046, ADR-0045):
+All built-ins follow two page-layout rules (ADR-0046, ADR-0045):
 
 - **A section that fits one page stays whole**: its height is measured against the
   content area (Typst's `measure` inside `context`) and, when it fits, the section is
@@ -276,6 +287,8 @@ Both built-ins follow two page-layout rules (ADR-0046, ADR-0045):
 ### Custom templates
 
 `design.template` accepts either a built-in name or a relative path to a template folder (`./my-template`). Custom templates use the same contract. `cv watch` also watches the custom template folder.
+
+`cv templates --extract <name> [--out <dir>]` writes a built-in's folder (entry point, manifest, helpers, and `config.typ` for `diy`) to disk — the official starting point for a custom template. The user edits it freely and points `design.template` at the folder; `--force` overwrites an existing target's template files. For the widest control without Typst fluency, start from `diy` and its knobs; for control beyond the knobs, edit the extracted `template.typ`.
 
 ---
 

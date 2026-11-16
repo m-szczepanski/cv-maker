@@ -885,6 +885,114 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   visible in build times (a multi-section two-page fit run went from ~3 s to ~6 s in
   debug builds), accepted as the cost of correct pagination.
 
+## ADR-0047 — the template lineup grows: `sidebar` and `modern` as originals
+
+- **Context:** The owner asked for a wider range of built-in templates and for external
+  Typst templates to be considered. A survey of the ecosystem (RenderCV's Typst package
+  (MIT), `davidculemann/typst-templates` (MIT-0), the Typst Universe CV category,
+  AltaCV/moderncv ports) found no droppable-in template: every one either hardcodes
+  the person's content in markup, imports `@preview/...` packages (network — forbidden
+  by the spec §6 purity rule and by construction in `src/render/`), or ignores the
+  `data.yaml` / `design` / `fit` contract (spec §6, §7). Integrating any of them is a
+  rewrite against the contract, so the ecosystem serves as style reference only.
+- **Decision:** write new originals in the established house style. Two join the
+  built-ins: `sidebar` (spec §6 already listed it as the optional third) — name,
+  contact and short sections in a tinted left rail bled to the page's left edge with
+  `page(background)`; `modern` — a solid accent header panel spanning the body
+  measure. Both honor all six `design` groups, the fit scales, and the house page
+  rules (ADR-0044/45/46). Hierarchy stays type/color/spacing-driven; the new devices
+  are color panels, not rules, so ADR-0030 holds unchanged.
+- **Measured Typst facts (owner review, first cut rendered the rail mid-page):**
+  `page(background)`/`foreground` content is laid out over the full page **with
+  `center + horizon` alignment** (`layout_marginal` in the pinned layout code), so a
+  background rect must be pinned explicitly — `align(top + left, rect(...))` — or it
+  floats to the page center. A negative-inset block does *not* bleed a fill into the
+  margins (measured: the accent band stayed exactly body-wide), so `modern` is a
+  body-width panel by decision, not by accident. Both facts are pinned by
+  `tests/geometry.rs`, which parses the PDF content streams (Typst paints fills as
+  corner paths inside tagged artifacts, not `re` operators, and page marginals shrink
+  with the fit loop, so the fixtures assert what stays true at scale 1.00).
+- **Consequences:** rail routing is by section type (`key_values` and `bullets` go to
+  the rail) — deterministic and it keeps the content schema free of layout flags, at
+  the cost of users not being able to move one section across columns without a
+  custom template (which is what `diy` and ADR-0048 are for). Every built-in now joins
+  the examples × templates one-page matrix, the `cv templates` listing, and the visual
+  review burden (AGENTS: rendered output must be looked at, not just tested).
+
+## ADR-0048 — DIY: a knob-driven `diy` template plus `cv templates --extract`
+
+- **Context:** The owner asked for a DIY template in which "the user can configure
+  absolutely everything" and chose the combined approach: configuration knobs for the
+  common choices and source-level editing for the rest. The open design question was
+  where the knobs live: extending the typed `design` schema (a seventh group, Rust
+  enums, schema generation, manifest machinery) or staying inside the template folder.
+- **Decision:** the template folder. `diy` reads its structure knobs — layout (single /
+  sidebar-left / sidebar-right), sidebar width, header style and alignment, contact
+  placement, heading case and decoration, date placement, justification — from
+  `config.typ`, a commented Typst dict beside the entry point; unknown knob values
+  fail the compile with the knob named (a typo must not silently render a different
+  look). Everything typographic remains in the `design` block, so knobs and theme stay
+  orthogonal. `cv templates --extract <name> [--out <dir>] [--force]` materializes any
+  built-in folder (entry point, manifest, helpers, config) on disk for editing, and
+  the folder is then an ordinary custom template of spec §6.
+- **Rejected:** `design.diy` in the Rust schema — a template-specific block in the
+  global design schema would need every built-in to declare, support, and ignore it
+  correctly, duplicating type validation Typst already provides, for knobs only one
+  template can ever read.
+- **Consequences:** knob errors surface as template compile errors (labeled as such)
+  rather than span diagnostics from `cv check`; knob discovery happens in
+  `config.typ`'s comments, not the JSON Schema; `cv watch` picks extracted folders up
+  automatically (they are custom templates). Extraction is per-file atomic: a uniquely
+  named temp file in the target directory is persisted into place (rule 29, the same
+  seam as the PDF output), so concurrent extracts cannot collide on one fixed temp
+  name and `--force` overwrites only the template's own files, leaving unrelated
+  files in the target alone.
+
+## ADR-0049 — coverage after the template lineup: measured numbers and three test conventions
+
+- **Context:** The template-lineup and `--extract` round added `src/publish.rs`
+  (the atomic-write seam shared with `cv build`), the extract command, and three new
+  built-ins, and review asked for 100% coverage across all files. Measured with
+  `cargo llvm-cov --all-targets` (cold rebuilds, coverage dir wiped, current code):
+  functions 100.00% in every file; lines 100.00% in every file except
+  `src/templates/mod.rs`, whose single missed record exists only in `report`'s
+  aggregate line-table (`LF/LH` = 608/607) — the lcov `DA` records, the
+  `--show-missing-lines` view, the JSON segments, and the HTML view all enumerate
+  zero missed lines and zero missed regions across the whole tree, twice over and
+  unchanged by cold rebuilds. Five rollup records (four regions in
+  `commands/templates.rs`, `fit.rs`, and `templates/mod.rs`, one line) sit behind
+  that arithmetic; they are llvm-cov's per-instantiation line-table merging for code
+  compiled into several targets, not untested behaviour — every view that can name
+  a line finds every line hit. What the round did fix is real: `publish.rs`'s and
+  `cv templates`' previously-commented unreachable arms became injected, tested
+  seams (`publish.rs` now reads 100.00% in every column of the rollup itself), and
+  two rollup-missed lines in `fit.rs` disappeared by moving panic-side macro
+  arguments onto executed lines. Tests: 367.
+- **Decision:** Three conventions close most of what looked like gaps, and are
+  recorded because they will recur:
+  1. An `assert!`/`assert_eq!` failure message must not own an expression on its
+     own line (`"msg: {:?}", probes.borrow()` put a call on a panic-only line);
+     compute the snapshot into a local on an executed line, then use an inline
+     `{var:?}` capture.
+  2. Test error-type checks assert the variant's rendered prefix (`message.contains
+     ("could not write")`) instead of `matches!(err, ...)`: the macro's `_ => false`
+     arm is a permanently uncovered region, and the rendered prefix is an
+     observable message — which is what rule 19 asks for anyway.
+  3. Coverage gaps that are production behaviour, not artifacts, are closed with
+     behaviour tests: three of fill phase's five `?` sites had error-propagation
+     tests; the cap probe and the margin stage did not, so
+     `a_compile_error_at_the_fill_cap_probe_propagates` and
+     `a_compile_error_in_the_margin_fill_stage_propagates` now cover them the same
+     way the shrink-phase tests do. Fake-session oracle closures must not carry
+     branches their test's search can never hit (a `|s| if s <= cap {...} else {...}`
+     left a dead arm).
+- **Consequences:** The `report` table's lines column reads 100.00% for every file
+  but `src/templates/mod.rs` (99.84%) for a record no other view sees; chasing it
+  further means fighting tool aggregation, not testing code. Regions at 99.93% are
+  the two invariant-commented arms plus the same artifact class ADR-0036 accepted —
+  both arms keep their comments (rule 21). If the rollup discrepancy must vanish,
+  the lever is tooling flags, not source.
+
 ## Open questions (spec §14) — status
 
 All closed as of M6; each carries the ADR that resolved it.

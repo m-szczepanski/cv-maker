@@ -130,6 +130,57 @@ pub fn load_builtin(name: &str) -> Result<Template> {
     assemble_builtin(name, &files)
 }
 
+/// Write every file of the built-in template `name` into `out_dir`, preserving the
+/// folder layout (template.typ, manifest.yaml, lib/*.typ, config.typ), so the result
+/// is a working custom template folder the user can edit (spec §6: `design.template:
+/// ./<dir>`). Each file lands through the shared atomic publish seam
+/// (`crate::publish`, the one the PDF output uses): a uniquely named temp file in
+/// the destination directory persisted into place, so concurrent extracts cannot
+/// collide on one fixed temp name and a user file is never the temp target. An
+/// existing non-empty `out_dir` is refused unless `force`. Returns the written
+/// paths, in deterministic (sorted) order.
+pub fn extract_builtin(name: &str, out_dir: &Path, force: bool) -> Result<Vec<PathBuf>> {
+    let known = builtin_names();
+    if !known.iter().any(|known| known == name) {
+        let hint = match crate::suggest::closest_match(name, &known) {
+            Some(best) => format!("did you mean '{best}'?"),
+            None => format!("available templates: {}", known.join(", ")),
+        };
+        return Err(Error::Unsupported(format!(
+            "cannot extract '{name}': no such built-in template ({hint})"
+        )));
+    }
+
+    if out_dir.is_dir()
+        && !force
+        && std::fs::read_dir(out_dir).is_ok_and(|mut d| d.next().is_some())
+    {
+        return Err(Error::Unsupported(format!(
+            "{} already exists and is not empty; pass --force to overwrite its files",
+            out_dir.display()
+        )));
+    }
+
+    let files = embedded_template_files(name);
+    let mut written = Vec::with_capacity(files.len());
+    for (rel_path, bytes) in files {
+        let path = out_dir.join(rel_path);
+        // An embedded source is always a folder-relative file (never a bare path
+        // with no parent), so `parent()` is `Some`; `out_dir` is the fallback.
+        let parent = path.parent().unwrap_or(out_dir);
+        std::fs::create_dir_all(parent).map_err(|source| Error::Io {
+            path: parent.display().to_string(),
+            source,
+        })?;
+        // The same atomic seam the PDF output uses: unique temp file in the
+        // parent directory, flushed, persisted into place; failures name the
+        // destination (`Error::Write`), rule 29.
+        crate::publish::publish(&path, bytes)?;
+        written.push(path);
+    }
+    Ok(written)
+}
+
 /// Whether a file list is a template folder: a `template.typ` at its root.
 fn has_entry_point(files: &[(&str, &[u8])]) -> bool {
     // Folder-relative, so equality also excludes a nested `lib/template.typ` helper.
@@ -324,8 +375,11 @@ mod tests {
         "name: x\ndescription: test template\nschema_version: 1\nsupported: [page]\n";
 
     #[test]
-    fn builtin_names_lists_both_builtins_sorted() {
-        assert_eq!(builtin_names(), ["classic", "compact"]);
+    fn builtin_names_lists_all_shipped_builtins_sorted() {
+        assert_eq!(
+            builtin_names(),
+            ["classic", "compact", "diy", "modern", "sidebar"]
+        );
     }
 
     #[test]
@@ -630,6 +684,193 @@ mod tests {
         // stands alone): unknown embedded names get the did-you-mean error.
         let err = load_builtin("comapct").expect_err("typo'd name must fail");
         assert!(err.to_string().contains("did you mean 'compact'"));
+    }
+
+    #[test]
+    fn extract_builtin_writes_the_whole_folder_and_reloads_as_a_custom_template() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let out = root.path().join("my-compact");
+        let written = extract_builtin("compact", &out, false).expect("extract");
+        let paths: Vec<String> = written
+            .iter()
+            .map(|p| p.strip_prefix(&out).unwrap().display().to_string())
+            .collect();
+        assert!(
+            paths.iter().any(|p| p.ends_with("template.typ"))
+                && paths.iter().any(|p| p.ends_with("manifest.yaml"))
+                && paths.iter().any(|p| p.ends_with("inline.typ")),
+            "entry point, manifest and helper are all written: {paths:?}"
+        );
+        // What lands on disk is a valid custom template folder (spec §6).
+        let template = load("./my-compact", root.path()).expect("extracted folder loads");
+        assert_eq!(template.name, "compact");
+        // Uniquely named temp files must not survive the extract anywhere in the
+        // folder tree, in either of their reserved shapes.
+        let names: Vec<String> = [out.clone(), out.join("lib")]
+            .iter()
+            .flat_map(|d| std::fs::read_dir(d).expect("read dir"))
+            .filter_map(|entry| entry.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !names
+                .iter()
+                .any(|n| n.ends_with(".tmp") || n.starts_with(".cv-")),
+            "no temp files are left behind: {names:?}"
+        );
+    }
+
+    #[test]
+    fn extract_builtin_rejects_unknown_names_before_writing_anything() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let out = root.path().join("nope");
+        let err = extract_builtin("no-such-template", &out, false).expect_err("unknown fails");
+        let message = err.to_string();
+        assert!(
+            message.contains("no such built-in template"),
+            "got: {message}"
+        );
+        assert!(!out.exists(), "a refused extract creates no folder");
+    }
+
+    #[test]
+    fn extract_builtin_refuses_a_non_empty_folder_unless_forced() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let out = root.path().join("compact");
+        std::fs::create_dir(&out).expect("create target");
+        std::fs::write(out.join("note.txt"), "mine").expect("fill target");
+
+        let err = extract_builtin("compact", &out, false).expect_err("non-empty is refused");
+        assert!(err.to_string().contains("--force"), "got: {err}");
+        assert!(out.join("note.txt").exists(), "refusal writes nothing");
+        assert!(!out.join("template.typ").exists(), "refusal writes nothing");
+
+        extract_builtin("compact", &out, true).expect("--force extracts");
+        assert!(out.join("template.typ").is_file(), "forced extract lands");
+        assert_eq!(
+            std::fs::read_to_string(out.join("note.txt")).expect("read user file"),
+            "mine",
+            "--force overwrites the template's own files, not unrelated user files"
+        );
+    }
+
+    #[test]
+    fn extract_into_a_missing_nested_folder_creates_the_path() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let out = root.path().join("a/b/sidebar");
+        extract_builtin("sidebar", &out, false).expect("creates missing parents");
+        assert!(out.join("template.typ").is_file());
+    }
+
+    #[test]
+    fn extract_into_an_existing_empty_folder_needs_no_force() {
+        // "Not empty" is the refusal, so a folder the user just created is fine.
+        let root = tempfile::tempdir().expect("temp dir");
+        let out = root.path().join("modern");
+        std::fs::create_dir(&out).expect("create empty target");
+        extract_builtin("modern", &out, false).expect("empty target extracts");
+        assert!(out.join("template.typ").is_file());
+    }
+
+    #[test]
+    fn extract_into_an_unwritable_folder_reports_a_write_error_not_a_silent_pass() {
+        // The emptiness probe cannot read the folder; the attempt must not be read
+        // as "empty, proceed into trouble" silently — the publish step fails with
+        // the typed write error naming the file it was writing. The `lib` dir keeps
+        // its own write permission, so `lib/inline.typ` lands and `manifest.yaml`
+        // is the first file aimed at the unwritable folder. (POSIX permissions,
+        // the same assumption as the other fault tests.)
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().expect("temp dir");
+        let out = root.path().join("tpl");
+        std::fs::create_dir_all(out.join("lib")).expect("create lib");
+        std::fs::write(out.join("lib").join("user.txt"), b"mine").expect("non-empty");
+        std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o100)).expect("chmod 100");
+        let err = extract_builtin("compact", &out, false).expect_err("unreadable, unwritable");
+        std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o755)).expect("chmod back");
+        let message = err.to_string();
+        assert!(
+            message.contains("could not write") && message.contains("manifest.yaml"),
+            "the write error names the first file aimed at the locked folder: {message}"
+        );
+    }
+
+    #[test]
+    fn extract_of_a_name_close_to_nothing_lists_the_available_templates() {
+        // The did-you-mean arm needs a near neighbour; with none, the answer is
+        // the full list.
+        let root = tempfile::tempdir().expect("temp dir");
+        let out = root.path().join("tpl");
+        let err = extract_builtin("zzzzzzzzzzzzzzz", &out, false).expect_err("no near name");
+        let message = err.to_string();
+        assert!(
+            message.contains("available templates:")
+                && message.contains("classic")
+                && message.contains("sidebar"),
+            "got: {message}"
+        );
+    }
+
+    #[test]
+    fn extract_into_an_existing_regular_file_is_a_typed_io_error() {
+        // `template.typ`'s parent is the target; when the target path is a regular
+        // file the directory creation fails, surfaced as `Error::Io` naming it.
+        let root = tempfile::tempdir().expect("temp dir");
+        let out = root.path().join("not-a-dir");
+        std::fs::write(&out, "x").expect("write file");
+        let err = extract_builtin("compact", &out, false).expect_err("target is a file");
+        let message = err.to_string();
+        assert!(
+            message.contains("could not read") && message.contains("not-a-dir"),
+            "the Io error names the colliding path: {message}"
+        );
+    }
+
+    #[test]
+    fn extract_reports_an_unwritable_target_dir_as_a_typed_write_error() {
+        // The temp file cannot even be created in a read-only directory; the failure
+        // is `Error::Write` naming the destination file it was working for. Same
+        // POSIX-permission assumption as the custom-template fault tests.
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().expect("temp dir");
+        let out = root.path().join("tpl");
+        // Sources are walked in sorted order, so `lib/inline.typ` is attempted first.
+        std::fs::create_dir_all(out.join("lib")).expect("create lib dir");
+        std::fs::set_permissions(out.join("lib"), std::fs::Permissions::from_mode(0o500))
+            .expect("chmod 500");
+        let err = extract_builtin("compact", &out, true).expect_err("read-only dir");
+        std::fs::set_permissions(out.join("lib"), std::fs::Permissions::from_mode(0o755))
+            .expect("chmod back");
+        let message = err.to_string();
+        assert!(
+            message.contains("could not write") && message.contains("inline.typ"),
+            "the Write error names the destination: {message}"
+        );
+    }
+
+    #[test]
+    fn extract_reports_a_persist_collision_as_a_typed_write_error() {
+        // The temp file is written but `persist` cannot rename onto an existing
+        // directory; this is the atomic-publish arm, reported as `Error::Write`
+        // naming the target, and the temp file must not linger.
+        let root = tempfile::tempdir().expect("temp dir");
+        let out = root.path().join("tpl");
+        std::fs::create_dir_all(out.join("lib").join("inline.typ")).expect("block the persist");
+        let err = extract_builtin("compact", &out, true).expect_err("target path is a directory");
+        let message = err.to_string();
+        assert!(
+            message.contains("could not write") && message.contains("inline.typ"),
+            "the Write error names the target file: {message}"
+        );
+        let leftovers: Vec<String> = std::fs::read_dir(out.join("lib"))
+            .expect("read lib dir")
+            .filter_map(|entry| entry.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            leftovers.iter().all(|n| n == "inline.typ"),
+            "the failed extract leaves no temp file behind: {leftovers:?}"
+        );
     }
 
     #[test]

@@ -10,6 +10,7 @@ pub mod error;
 pub mod fit;
 pub mod markdown;
 pub mod model;
+pub mod publish;
 pub mod render;
 pub mod suggest;
 pub mod templates;

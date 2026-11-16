@@ -158,7 +158,7 @@ and an empty `[label]()` is an error, because the export refuses it.
 | `cv build [file]` | Render `file` (default `cv.yaml`) to `<name>.pdf` next to it |
 | `cv watch [file]` | Build once, then rebuild whenever the YAML — or a custom template — changes |
 | `cv check [file]` | Validate only; nothing is written |
-| `cv templates` | List the built-in templates |
+| `cv templates` | List the built-in templates; `--extract <name> [--out <dir>] [--force]` writes one to disk to edit |
 | `cv fonts` | List every font family you can use, and where each comes from |
 | `cv schema` | Print the JSON Schema of the file format |
 
@@ -277,20 +277,42 @@ little rather than pushing the statement onto a page of its own.
 ```
 classic  Conventional single-column layout with a right-aligned contact header.
 compact  Dense single-column layout, ideal for experienced engineers.
+diy      Configurable layout engine — edit config.typ (or extract with `cv templates --extract diy`).
+modern   Bold accent header band, uppercase section labels, roomy two-column contact.
+sidebar  Two-column layout with a tinted left rail for contact and skills.
 ```
 
 Pick one with `design.template`. The starter file shows every design field; delete any
 of them to take the default. Page is `a4` or `letter`; lengths accept `pt`, `cm`, `mm`,
 `in`; colours are `#rgb` or `#rrggbb`.
 
+### DIY: configure the layout without writing Typst
+
+`diy` is one template with the layout choices pulled out into knobs — extract it,
+edit `config.typ`, build:
+
+```sh
+cv templates --extract diy          # writes ./diy/ with template.typ + config.typ
+$EDITOR ./diy/config.typ            # layout, header band, heading case, dates, justify…
+```
+
+```yaml
+design:
+  template: ./diy
+```
+
+Every knob is documented and commented in `config.typ`; a wrong value fails the build
+with the knob named. Fonts, sizes, spacing, colours, margins and the fit loop keep
+working exactly as with the other templates — `config.typ` only changes structure.
+
 ### Using your own template
 
 A template is a folder with a `template.typ` entry point, a `manifest.yaml`, and any
-number of `.typ` helpers — the built-ins live in the repository's `templates/` folder,
-so the usual start is a copy of one of them:
+number of `.typ` helpers. Start from a built-in by extracting it — the built-ins are
+embedded in the binary, so no clone is needed:
 
 ```sh
-cp -r templates/classic ./my-template
+cv templates --extract classic --out ./my-template
 $EDITOR ./my-template/template.typ
 ```
 
