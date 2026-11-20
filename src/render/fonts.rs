@@ -19,6 +19,14 @@ use crate::error::{Error, Result};
 /// All files in `fonts/`, embedded at compile time.
 pub static BUNDLED_FONT_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/fonts");
 
+/// `.ttf`/`.otf` suffix test, case-insensitive: macOS volumes commonly carry
+/// uppercase extensions (`MyFont.TTF`), and the README promises any `.ttf`/`.otf`.
+fn is_font_extension(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("ttf") || e.eq_ignore_ascii_case("otf"))
+}
+
 /// The bundled fonts that can be embedded into the compiler: (family file name, bytes).
 /// Sorted by name for determinism. Only .ttf/.otf files count; licenses/docs are skipped.
 /// Embedded paths are UTF-8 by construction (the repo's font files are named in ASCII),
@@ -26,10 +34,7 @@ pub static BUNDLED_FONT_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/fonts")
 pub fn bundled_fonts() -> Vec<(&'static str, &'static [u8])> {
     let mut fonts: Vec<(&'static str, &'static [u8])> = BUNDLED_FONT_DIR
         .files()
-        .filter(|f| {
-            let ext = f.path().extension().and_then(|e| e.to_str());
-            matches!(ext, Some("ttf") | Some("otf"))
-        })
+        .filter(|f| is_font_extension(f.path()))
         .map(|f| {
             (
                 f.path().to_str().expect("embedded paths are valid UTF-8"),
@@ -165,12 +170,7 @@ pub fn collect_font_dir_files(dirs: &[PathBuf]) -> Result<Vec<Vec<u8>>> {
         let mut names: Vec<PathBuf> = entries
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| {
-                matches!(
-                    p.extension().and_then(|e| e.to_str()),
-                    Some("ttf") | Some("otf")
-                )
-            })
+            .filter(|p| is_font_extension(p))
             .collect();
         names.sort();
         for path in names {
@@ -329,6 +329,20 @@ mod tests {
         assert_eq!(files.len(), 2, "only .ttf/.otf count, sorted");
         assert_eq!(&files[0], b"font-a", "sorted by file name");
         assert_eq!(&files[1], b"font-b");
+    }
+
+    #[test]
+    fn collect_font_dir_files_counts_uppercase_extensions() {
+        // macOS volumes often carry `MyFont.TTF`: the README promises a directory
+        // of .ttf/.otf fonts regardless of the suffix's case.
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("myfont.TTF"), b"upper").expect("write TTF");
+        std::fs::write(dir.path().join("other.Otf"), b"mixed").expect("write Otf");
+
+        let files = collect_font_dir_files(&[dir.path().to_path_buf()]).expect("collect works");
+        assert_eq!(files.len(), 2, "uppercase extensions count");
+        assert_eq!(&files[0], b"upper");
+        assert_eq!(&files[1], b"mixed");
     }
 
     #[test]
