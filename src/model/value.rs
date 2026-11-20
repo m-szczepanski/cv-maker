@@ -14,6 +14,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 
 /// A length with an explicit unit, parsed from strings like `1.5cm`, `9.5pt`, `2mm`, `0.5in`.
+///
+/// Never negative: the JSON Schema pattern admits no sign, and the parser enforces
+/// the same, so downstream code (fit floors, template margins) needs no clamp.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Length {
     pub value: f64,
@@ -166,6 +169,12 @@ fn parse_length(s: &str) -> Result<Length> {
     })?;
     if !value.is_finite() {
         return Err(Error::invalid_value(trimmed, "a finite number"));
+    }
+    if value < 0.0 {
+        return Err(Error::invalid_value(
+            trimmed,
+            "a non-negative length, e.g. \"0cm\" or \"1.5cm\"",
+        ));
     }
     Ok(Length { value, unit })
 }

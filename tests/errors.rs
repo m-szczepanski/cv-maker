@@ -124,6 +124,19 @@ fn bad_length_is_rejected() {
 }
 
 #[test]
+fn negative_length_is_rejected() {
+    let (ok, _, stderr) = check_broken(
+        "negative-length",
+        concat!(
+            "schema: 1\ncv:\n  name: Jane Doe\n",
+            "design:\n  margins: { x: -2cm, y: 1cm }\n",
+        ),
+    );
+    assert!(!ok);
+    insta::assert_snapshot!(stderr);
+}
+
+#[test]
 fn malformed_yaml_syntax_is_rejected() {
     let (ok, _, stderr) = check_broken("malformed-yaml", "schema: 1\ncv:\n  name: [unclosed\n");
     assert!(!ok);

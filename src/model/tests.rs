@@ -191,10 +191,11 @@ fn length_parsing_covers_units_and_rejects_bad_input() {
         Length::new(0.5, LengthUnit::In)
     );
 
-    // Missing unit / unknown unit / garbage must fail.
+    // Missing unit / unknown unit / garbage / negative must fail.
     assert!(serde_yaml_ng::from_str::<Length>("\"9.5\"").is_err());
     assert!(serde_yaml_ng::from_str::<Length>("\"9.5em\"").is_err());
     assert!(serde_yaml_ng::from_str::<Length>("\"abc\"").is_err());
+    assert!(serde_yaml_ng::from_str::<Length>("\"-1cm\"").is_err());
 }
 
 #[test]
