@@ -81,6 +81,7 @@ design:
   fit_floor:
     min_body_size: 8.5pt
     min_scale: 0.85
+  font_paths: []           # extra directories with .ttf/.otf files
 "##;
 
 pub fn run(args: &InitArgs) -> Result<()> {

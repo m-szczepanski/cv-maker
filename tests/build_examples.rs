@@ -155,7 +155,7 @@ fn design_font_paths_resolve_relative_to_the_yaml() {
 
     let yaml_path = dir.join("cv.yaml");
     let yaml = fs::read_to_string(&yaml_path).expect("read starter");
-    let with_paths = yaml.replace("design:", "design:\n  font_paths:\n    - fonts");
+    let with_paths = yaml.replace("font_paths: []", "font_paths:\n    - fonts");
     fs::write(&yaml_path, with_paths).expect("write yaml");
 
     let (ok, out) = run_cv(&dir, &["check", "cv.yaml"]);
