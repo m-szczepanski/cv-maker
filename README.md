@@ -127,8 +127,9 @@ cv check                 # or just validate, no PDF
 | `bullets` | awards, highlights | plain strings |
 | `text` | paragraphs, a note | plain strings |
 
-Every field is optional except `cv.name` and a section's `title`. `schema: 1` is
-required and stays `1`.
+Every field is optional except `cv.name`, a section's `title`, and the fields an item
+needs to render: `heading` for `entries`, `key` and `value` for `key_values`, `label`
+and `url` for a link. `schema: 1` is required and stays `1`.
 
 ### A little formatting
 
@@ -212,7 +213,8 @@ it moves whole to the next page. You can see what the loop did in the last line 
 
 ```
 cv.pdf  1 page  fit: scale 1.00  (218 ms)                             # already fit
-cv.pdf  1 page  fit: scale 0.94 spacing 0.71 margins 0.86  (262 ms)   # tightened to fit
+cv.pdf  1 page  fit: scale 1.00 spacing 0.70 margins 0.88  (262 ms)   # tightened spacing to fit
+cv.pdf  1 page  fit: scale 0.89 spacing 0.60 margins 0.83  (271 ms)   # ...and type too, at the floors
 cv.pdf  2 pages  fit: scale 1.00  (231 ms)                            # fills its 2-page target as written
 cv.pdf  2 pages  fit: scale 1.22 spacing 3.00 margins 1.00  (240 ms)  # grew to fill its 2-page target
 ```
@@ -381,6 +383,8 @@ rather than one at a time.
   anywhere, which is why the output can live in git next to its source. That holds while
   the fonts come from the binary or from your own `font_paths`; a family resolved from the
   operating system can differ between machines (`cv fonts` shows where each came from).
+  It also assumes the template is time-free — the built-ins are (`document(date: none)`,
+  no `datetime` calls); a custom template that reads the clock breaks the guarantee.
 - **Dates are strings.** Write `2021 – present`, `Q3 2019`, whatever you want to see.
 - **Licence:** MIT. Bundled fonts are under their own open licences (see
   `fonts/LICENSES.md`).

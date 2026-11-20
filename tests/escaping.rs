@@ -25,6 +25,7 @@ cv:
   name: "Jane # Doe $ _ \\ @ `tick`"
   headline: "#panic(\"injected\") #show heading: it => emoji"
   location: "Berlin $ #{ 1 + 1 }"
+  gdpr: "Consent $data _kept \\ #panic @lit"
   contact:
     email: "jane@example.dev"
     links:
@@ -50,6 +51,10 @@ cv:
       type: text
       items:
         - "Another with #emph{x} and `code` and 5 < 6 & 7 > 2."
+    - title: "Pairs #3"
+      type: key_values
+      items:
+        - { key: "Langs #1", value: "Rust $ Go \\ _ @" }
 design:
   template: compact
 "##;
@@ -125,5 +130,24 @@ fn markdown_still_works_around_the_special_characters() {
     assert!(
         !text.contains("**works**"),
         "the markers of a Markdown-enabled field must not leak, got:\n{text}"
+    );
+}
+
+/// The GDPR statement (literal by contract, ADR-0045) and the `key_values` fields
+/// (never Markdown-enabled) must carry every hostile character through as typed.
+#[test]
+fn the_gdpr_statement_and_key_values_stay_literal() {
+    let dir = unique_dir("escaping-gdpr-kv");
+    let text = build(&dir, "cv.pdf");
+    for literal in ["$data", "_kept", "@lit", "Rust $ Go", "Langs #1"] {
+        assert!(
+            text.contains(literal),
+            "`{literal}` must appear as text, got:\n{text}"
+        );
+    }
+    // The custom statement replaced the built-in clause, not just decorated it.
+    assert!(
+        !text.contains("Regulation (EU) 2016/679"),
+        "the default clause must be gone once cv.gdpr is set, got:\n{text}"
     );
 }

@@ -208,6 +208,26 @@ fn an_invalid_diy_knob_value_fails_the_build_naming_the_knob() {
 }
 
 #[test]
+fn a_non_boolean_justify_knob_fails_the_build_naming_the_knob() {
+    // Every knob is guarded, booleans included: `justify: "yes"` must name the
+    // knob instead of surfacing Typst's generic parameter-type error (ADR-0048).
+    let dir = unique_dir("extract-diy-justify-typo");
+    let (ok, out) = run_cv(&dir, &["templates", "--extract", "diy"]);
+    assert!(ok, "extract must succeed: {out}");
+    write_cv(&dir, "./diy");
+    let cfg = dir.join("diy/config.typ");
+    let original = fs::read_to_string(&cfg).expect("read config");
+    fs::write(&cfg, original.replace("justify: false", "justify: \"yes\"")).expect("write config");
+
+    let (ok, out) = run_cv(&dir, &["build"]);
+    assert!(!ok, "a non-boolean justify must fail the build");
+    assert!(
+        out.contains("template error") && out.contains("cfg.justify"),
+        "the failure must be labeled and name the knob: {out}"
+    );
+}
+
+#[test]
 fn a_typo_in_the_layout_knob_fails_the_build_instead_of_defaulting_to_a_rail() {
     // `layout` gates the biggest visual choice; a near-miss like "sidebar" must
     // not silently render the left rail (ADR-0048: unknown knob values are loud).

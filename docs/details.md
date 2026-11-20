@@ -243,7 +243,8 @@ A template is a folder:
 templates/<name>/
   template.typ       # entry point
   manifest.yaml      # name, description, supported design options, schema version
-  assets/            # optional (not fonts)
+  (other *.typ)      # helpers, config — only .typ files plus manifest reach the compiler
+                     # (no binary assets; the virtual file system serves no images: ADR-0027)
 ```
 
 ### Contract

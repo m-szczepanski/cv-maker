@@ -74,6 +74,34 @@ fn build_exposes_its_flags() {
     }
 }
 
+/// The README exit-code table: an unknown command is a bad command line, exit 2 —
+/// distinct from a failed operation (1) and from success with warnings (0).
+#[test]
+fn an_unknown_command_exits_with_code_two() {
+    let output = cv().arg("frobnicate").output().expect("binary runs");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "an unknown command must exit 2, got: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Same for an unknown flag: the command line itself is invalid, exit 2.
+#[test]
+fn an_unknown_flag_exits_with_code_two() {
+    let output = cv()
+        .args(["build", "--nope"])
+        .output()
+        .expect("binary runs");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "an unknown flag must exit 2, got: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn init_exposes_its_flags() {
     let output = cv().args(["init", "--help"]).output().expect("binary runs");

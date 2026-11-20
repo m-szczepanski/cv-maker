@@ -1,0 +1,12 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  × design.margins.x: invalid value "-2cm": expected a non-negative length, e.g. "0cm" or "1.5cm"
+  │ at line 5 column 17
+   ╭─[cv.yaml:5:17]
+ 4 │ design:
+ 5 │   margins: { x: -2cm, y: 1cm }
+   ·                 ┬
+   ·                 ╰── here
+   ╰────

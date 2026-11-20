@@ -64,6 +64,7 @@
 #let header-style = if "none tint accent".split(" ").contains(cfg.header-style) { cfg.header-style } else { assert(false, message: "diy: cfg.header-style must be \"none\", \"tint\" or \"accent\""); "none" }
 #let header-align = if "left center".split(" ").contains(cfg.header-align) { cfg.header-align } else { assert(false, message: "diy: cfg.header-align must be \"left\" or \"center\""); "left" }
 #let contact-style = if "dots stack split".split(" ").contains(cfg.contact) { cfg.contact } else { assert(false, message: "diy: cfg.contact must be \"dots\", \"stack\" or \"split\""); "dots" }
+#let justify = if type(cfg.justify) == bool { cfg.justify } else { assert(false, message: "diy: cfg.justify must be true or false"); false }
 
 // Typst's `upper`/`lower` cover two of the three cases; title case is spelled out
 // (0.15 has no `titlecase`).
@@ -105,7 +106,7 @@
   lang: "en",
 )
 
-#set par(leading: body-size * line-height - body-size, spacing: body-size * line-height * 0.9, justify: cfg.justify)
+#set par(leading: body-size * line-height - body-size, spacing: body-size * line-height * 0.9, justify: justify)
 
 // Honor `design.fonts.mono`: Typst's `raw` element hardcodes DejaVu Sans Mono via a
 // built-in show-set rule; a user show-set rule overrides it (same mechanism as

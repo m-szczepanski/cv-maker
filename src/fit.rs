@@ -89,8 +89,8 @@ pub struct FitOutcome {
     pub output: RenderOutput,
     pub applied: FitParams,
     /// Compiles performed — bounded by `1 + 2 * (MAX_PHASE_PROBES + 1)` on the
-    /// tighten path and `1 + MAX_PHASE_PROBES + 1` on the fill path; the two
-    /// are mutually exclusive.
+    /// tighten path and `1 + 3 * (MAX_PHASE_PROBES + 1)` on the fill path; the
+    /// two are mutually exclusive.
     pub compiles: usize,
     /// Content still overflowed at every floor (spec §7 step 4; exit stays 0,
     /// ADR-0026).

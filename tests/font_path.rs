@@ -108,7 +108,7 @@ fn design_font_paths_select_a_relative_user_font_directory() {
 
     let yaml_path = dir.join("cv.yaml");
     let yaml = fs::read_to_string(&yaml_path).expect("read starter");
-    let with_paths = yaml.replace("design:\n", "design:\n  font_paths:\n    - myfonts\n");
+    let with_paths = yaml.replace("font_paths: []", "font_paths:\n    - myfonts");
     assert_ne!(yaml, with_paths);
     fs::write(&yaml_path, with_paths).expect("write yaml");
 

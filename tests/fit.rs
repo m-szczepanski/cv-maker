@@ -416,6 +416,44 @@ fn the_gdpr_statement_renders_on_the_last_page() {
     );
 }
 
+/// The GDPR clause counts as page content in the fitting loop (ADR-0045): this
+/// fifteen-entry CV fits one page exactly as written once the clause is removed,
+/// and with the standard clause the loop tightens spacing and margins to keep
+/// everything — statement included — on that one page.
+#[test]
+fn the_gdpr_clause_tips_the_fit_into_tightening() {
+    let with_clause = cv_yaml(15, 1);
+    let without_clause =
+        with_clause.replace("  name: Jane Doe\n", "  name: Jane Doe\n  gdpr: null\n");
+
+    let dir = unique_dir("fit-gdpr-tips");
+    fs::write(dir.join("cv.yaml"), without_clause).expect("write yaml");
+    let (ok, out) = run_cv(&dir, &["build", "--output", "bare.pdf"]);
+    assert!(ok, "got: {out}");
+    assert!(
+        out.contains("1 page  fit: scale 1.00  ("),
+        "without the clause the content fits as written, got: {out}"
+    );
+
+    fs::write(dir.join("cv.yaml"), with_clause).expect("write yaml");
+    let (ok, out) = run_cv(&dir, &["build", "--output", "clause.pdf"]);
+    assert!(ok, "got: {out}");
+    assert!(
+        out.contains("1 page  fit: scale 1.00 spacing 0.93 margins 0.97"),
+        "the clause alone must tip the loop into tightening spacing and margins, got: {out}"
+    );
+    assert!(
+        !out.contains("content still overflows"),
+        "one page is kept, got: {out}"
+    );
+    let pages = pdf_extract::extract_text_by_pages(dir.join("clause.pdf")).expect("text");
+    assert_eq!(
+        pages.len(),
+        1,
+        "the statement never strands a page of its own"
+    );
+}
+
 /// The number in "… spill onto N extra page(s)" of the fit-overflow warning.
 fn reported_extra_pages(out: &str) -> usize {
     let start = out
