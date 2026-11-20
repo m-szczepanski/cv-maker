@@ -47,12 +47,14 @@ tempfile = "3"
 # typst-as-lib 0.17.0 declares typst ^0.15, so these versions are mutually compatible.
 typst = "=0.15.1"
 typst-pdf = "=0.15.1"
-# System font discovery (spec §2, §8).
+# System font discovery (spec §2, §8) happens through typst-as-lib's `typst-kit-fonts`
+# feature; this direct pin exists to hold the transitive typst-kit at the version that
+# discovery was verified against (rule 23).
 typst-kit = "=0.15.1"
 # typst-as-lib: World/glue library for in-memory Typst compilation (spec §2, §9).
 # Supports the pinned typst 0.15 (verified: its 0.17.0 release requires typst ^0.15).
 # `typst-kit-fonts` enables system font discovery via typst-kit (spec §8).
-typst-as-lib = { version = "0.17", features = ["typst-kit-fonts"] }
+typst-as-lib = { version = "=0.17.0", features = ["typst-kit-fonts"] }
 
 [dev-dependencies]
 # Temporary directories for CLI end-to-end tests.
