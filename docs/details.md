@@ -159,6 +159,12 @@ cv:
       items:
         - { key: Languages, value: "Rust, Go, Python, TypeScript" }
         - { key: Infrastructure, value: "Kubernetes, Postgres, Kafka" }
+    - title: Certificates
+      type: certificates
+      items:
+        - name: Certified Kubernetes Administrator
+          issuer: Cloud Native Computing Foundation
+          url: https://example.org/verify/cka
     - title: Education
       type: entries
       items:
@@ -197,8 +203,8 @@ design:
 
 ### Content model
 
-- Section `type` values for v1: `entries` (heading/org/location/dates/bullets), `key_values` (skills style), `bullets` (flat list), `text` (paragraph).
-- The set of section types is part of the schema contract and is closed in v1. Templates must support all of them.
+- Section `type` values for v1: `entries` (heading/org/location/dates/bullets), `key_values` (skills style), `bullets` (flat list), `text` (paragraph), `certificates` (name/issuer/url — ADR-0050: `name` required, `issuer` and `url` optional, the fields are literal text and the URL follows the strict contact-link rule).
+- The set of section types is part of the schema contract and is closed in v1 (extending it is an ADR: the current set is five). Templates must support all of them.
 - Bullet and text fields support a **small inline Markdown subset**: `**bold**`, `*italic*`, `` `code` ``, and `[label](url)`. Anything else is literal text. Conversion to Typst must escape all Typst-special characters in user text. User text must never be able to inject Typst code.
 - Dates are free-form strings.
 - `cv.gdpr` (ADR-0045) carries the consent statement, always literal text (no Markdown), the user's own wording. It defaults to the standard recruitment-consent clause (`DEFAULT_GDPR`); `gdpr: null` opts out. Built-in templates render it small and muted at the bottom of the last page; custom templates decide for themselves (`data.yaml` always carries the value, `null` when opted out).
@@ -265,7 +271,8 @@ templates/<name>/
    via `page(background)`, pinned with an explicit `align` because marginals lay out
    centered) carries name, contact and the short sections; the main column
    carries the summary and the narrative ones. Routing to the rail is by section type
-   (`key_values`/`bullets`), which keeps the content schema flag-free (ADR-0048).
+   (`key_values`/`bullets`/`certificates`), which keeps the content schema flag-free
+   (ADR-0048).
 4. `modern`: a solid accent header panel over the body measure (name and headline left,
    contact stacked right) above the clean single-column body.
 5. `diy`: one engine whose structure is chosen in `config.typ` beside it — layout

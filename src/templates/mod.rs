@@ -592,24 +592,26 @@ mod tests {
     }
 
     #[test]
-    fn classic_loads_with_all_section_types_and_the_inline_helper() {
-        let template = load_builtin("classic").expect("classic must load");
-        assert_eq!(template.name, "classic");
-        for section_type in ["entries", "key_values", "bullets", "text"] {
+    fn every_builtin_supports_all_section_types_and_the_inline_helper() {
+        for name in builtin_names() {
+            let template = load_builtin(&name).expect("built-in loads");
+            assert_eq!(template.name, name);
+            for section_type in ["entries", "key_values", "bullets", "text", "certificates"] {
+                assert!(
+                    template
+                        .main_source
+                        .contains(&format!("section.type == \"{section_type}\"")),
+                    "'{name}' must support the {section_type} section type"
+                );
+            }
             assert!(
                 template
-                    .main_source
-                    .contains(&format!("section.type == \"{section_type}\"")),
-                "classic must support the {section_type} section type"
+                    .extra_sources
+                    .iter()
+                    .any(|(path, _)| path == "lib/inline.typ"),
+                "'{name}' ships the inline Markdown helper"
             );
         }
-        assert!(
-            template
-                .extra_sources
-                .iter()
-                .any(|(path, _)| path == "lib/inline.typ"),
-            "classic ships the inline Markdown helper"
-        );
     }
 
     #[test]

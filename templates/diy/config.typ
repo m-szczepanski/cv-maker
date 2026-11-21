@@ -17,9 +17,9 @@
   sidebar-width: 6cm,
 
   // Which sections go in the rail (sidebar layouts only), matched by section type:
-  // every "key_values" and "bullets" section is routed to the rail; "entries" and
-  // "text" sections stay in the main column. This is deterministic — it needs no
-  // per-section flags in your content.
+  // every "key_values", "bullets" and "certificates" section is routed to the rail;
+  // "entries" and "text" sections stay in the main column. This is deterministic —
+  // it needs no per-section flags in your content.
 
   // Header band behind the name. One of:
   //   "none"   — no band (default), cleanest.

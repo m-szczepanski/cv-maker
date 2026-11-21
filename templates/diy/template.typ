@@ -178,6 +178,21 @@
   ]
 }
 
+// One certificates item: the name in the entry heading's style, with the issuer
+// and verification link on the second line (the entry row's shape without the dates).
+#let certificate(item) = {
+  let second-line = ()
+  if item.issuer != none { second-line.push(text(weight: "semibold", item.issuer)) }
+  if item.url != none {
+    if item.issuer != none { second-line.push(text(fill: muted, " — ")) }
+    second-line.push(link(item.url)[#text(fill: accent, item.url)])
+  }
+  block(spacing: entry-gap, breakable: false)[
+    #text(size: body-size, weight: "semibold", font: design.fonts.heading)[#item.name]
+    #if second-line.len() > 0 [#v(-0.1em) #text(size: small-size)[#second-line.join()]]
+  ]
+}
+
 // Keep whole sections on a page (ADR-0046): a section whose measured height fits
 // the content area is wrapped in an unbreakable block, so Typst moves it whole to
 // the next page instead of cutting a list in half. `measure` is contextual: the
@@ -196,7 +211,8 @@
 }
 
 // One section: heading, rhythm, then the body for its type. `on-rail: true` renders
-// the narrow-column variants: key/value pairs stack, text is set at the small size.
+// the narrow-column variants: key/value pairs and certificates stack, text is set at
+// the small size.
 #let section-content(section, on-rail: false) = {
   let body = if section.type == "entries" {
     for item in section.items { entry(item) }
@@ -224,6 +240,22 @@
     list(..section.items.map(render), spacing: entry-gap * 0.6, tight: true)
   } else if section.type == "text" {
     for paragraph in section.items { par[#inline(paragraph)] }
+  } else if section.type == "certificates" {
+    if on-rail {
+      for item in section.items {
+        let midline = ()
+        if item.issuer != none { midline.push(text(size: small-size, fill: muted, item.issuer)) }
+        if item.url != none {
+          if midline.len() > 0 { midline.push(text(fill: muted, "  ·  ")) }
+          midline.push(link(item.url)[#text(size: small-size, fill: accent, item.url)])
+        }
+        block(spacing: entry-gap * 0.6, breakable: false)[
+          #text(size: small-size, weight: "semibold", font: design.fonts.heading)[#item.name]#if midline.len() > 0 [, #midline.join()]
+        ]
+      }
+    } else {
+      for item in section.items { certificate(item) }
+    }
   }
   section-heading(section.title, on-rail: on-rail) + v(0.35em) + body
 }
@@ -315,7 +347,7 @@
 // ---- Body --------------------------------------------------------------------------
 
 #{
-  let rail-sections = if sidebar { cv.sections.filter(s => s.type == "key_values" or s.type == "bullets") } else { () }
+  let rail-sections = if sidebar { cv.sections.filter(s => s.type == "key_values" or s.type == "bullets" or s.type == "certificates") } else { () }
   let main-sections = if sidebar { cv.sections.filter(s => s.type == "entries" or s.type == "text") } else { cv.sections }
 
   let main-width = page-width - 2 * margin-x - (if sidebar { rail-width + rail-gutter } else { 0cm })

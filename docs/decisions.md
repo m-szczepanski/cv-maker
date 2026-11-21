@@ -993,6 +993,39 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   both arms keep their comments (rule 21). If the rollup discrepancy must vanish,
   the lever is tooling flags, not source.
 
+## ADR-0050 — `certificates`: a fifth section type with name/issuer/url items
+
+- **Context:** The owner asked for a certificates section in every built-in template —
+  placed after the skills section and "of type entries", with each item carrying three
+  properties: `name`, `issuer`, `url`. The two halves conflict under the existing
+  schema: an `entries` item is `heading/org/location/dates/bullets` and has no home for
+  a URL, and overloading `entries` (or extending its items with a parallel vocabulary)
+  would let any section mix contradictory field sets.
+- **Decision:** A dedicated section type `certificates` whose items carry exactly the
+  requested shape — `name` (required), `issuer` (optional), `url` (optional) — added to
+  the closed `SectionBody` enum, so the item schema is precise and the template dispatch
+  stays explicit. `name` and `issuer` are literal text, like headings and orgs
+  (ADR-0016: no Markdown outside tokens); `url` is validated with the strict
+  contact-link rule (ADR-0017) — a dead verification link is a build error, not a
+  warning, because a CV is submitted with it. Rendering mirrors each template's entry
+  row: the name in the heading slot, the issuer and the URL (as an accent-colored link
+  labeled with itself, so the paper copy keeps the address) on the second line. The
+  `sidebar` and `diy` rails route `certificates` alongside `key_values`/`bullets` — it
+  is a short section, and the requested "after skills" position falls out of the content
+  ordering, which is where section order lives (the templates never hard-code it). The
+  starter, `examples/full.yaml` and the spec §4 sample all place the section right after
+  Skills, and spec §4's closed type list is updated in the same change: this is the
+  owner asking for a schema extension, not an agent expanding scope.
+- **Consequences:** The JSON Schema snapshot grows the fifth variant; the serde
+  "expected one of" list in the unknown-type error gains `certificates` (both
+  snapshots regenerated). Spec §4's "Templates must support all of them" now covers
+  five types: `src/templates/mod.rs` statically pins every built-in's dispatch, and
+  the all-templates example test asserts a certificate name and issuer actually appear
+  in each rendered PDF (an unhandled type would silently render nothing). Custom
+  templates that never dispatch `certificates` show nothing for it — the same behavior
+  they already have for any type they miss. The deviation from the literal "of type
+  entries" wording is flagged for the owner's review.
+
 ## Open questions (spec §14) — status
 
 All closed as of M6; each carries the ADR that resolved it.
