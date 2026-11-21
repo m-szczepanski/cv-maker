@@ -2,8 +2,8 @@
 // name, contact block and the short sections, the main column the narrative ones.
 //
 // Routing is by section type (deterministic, no per-section flags in the content
-// model): `key_values` and `bullets` sections go to the rail, `entries` and `text`
-// sections to the main column.
+// model): `key_values`, `bullets` and `certificates` sections go to the rail,
+// `entries` and `text` sections to the main column.
 //
 // Contract: reads the virtual `data.yaml` (cv + resolved design) and `sys.inputs.fit`
 // (fit-loop scale factors). Pure Typst; no network, no file system access.
@@ -120,6 +120,21 @@
   ]
 }
 
+// One certificates item: the name in the entry heading's style, with the issuer
+// and verification link on the second line (the entry row's shape without the dates).
+#let certificate(item) = {
+  let second-line = ()
+  if item.issuer != none { second-line.push(text(weight: "semibold", item.issuer)) }
+  if item.url != none {
+    if item.issuer != none { second-line.push(text(fill: muted, " — ")) }
+    second-line.push(link(item.url)[#text(fill: accent, item.url)])
+  }
+  block(spacing: entry-gap, breakable: false)[
+    #text(size: body-size, weight: "semibold", font: design.fonts.heading)[#item.name]
+    #if second-line.len() > 0 [#v(-0.1em) #text(size: small-size)[#second-line.join()]]
+  ]
+}
+
 // Keep whole sections on a page (ADR-0046): a section whose measured height fits
 // the content area is wrapped in an unbreakable block, so Typst moves it whole to
 // the next page instead of cutting a list in half. `measure` is contextual: the
@@ -139,8 +154,8 @@
 
 // One section: heading, rhythm, then the body for its type — as content, so
 // `section-block` can measure it and keep it whole when it fits a page.
-// `rail: true` renders the narrow-column variants: key/value pairs stack, text is
-// set at the small size.
+// `rail: true` renders the narrow-column variants: key/value pairs and certificates
+// stack, text is set at the small size.
 #let section-content(section, rail: false) = {
   let body = if section.type == "entries" {
     for item in section.items { entry(item) }
@@ -168,6 +183,22 @@
     list(..section.items.map(render), spacing: entry-gap * 0.6, tight: true)
   } else if section.type == "text" {
     for paragraph in section.items { par[#inline(paragraph)] }
+  } else if section.type == "certificates" {
+    if rail {
+      for item in section.items {
+        let midline = ()
+        if item.issuer != none { midline.push(text(size: small-size, fill: muted, item.issuer)) }
+        if item.url != none {
+          if midline.len() > 0 { midline.push(text(fill: muted, "  ·  ")) }
+          midline.push(link(item.url)[#text(size: small-size, fill: accent, item.url)])
+        }
+        block(spacing: entry-gap * 0.6, breakable: false)[
+          #text(size: small-size, weight: "semibold", font: design.fonts.heading)[#item.name]#if midline.len() > 0 [, #midline.join()]
+        ]
+      }
+    } else {
+      for item in section.items { certificate(item) }
+    }
   }
   section-heading(section.title) + v(0.35em) + body
 }
@@ -196,7 +227,7 @@
 }
 
 #{
-  let rail-sections = cv.sections.filter(s => s.type == "key_values" or s.type == "bullets")
+  let rail-sections = cv.sections.filter(s => s.type == "key_values" or s.type == "bullets" or s.type == "certificates")
   let main-sections = cv.sections.filter(s => s.type == "entries" or s.type == "text")
 
   grid(

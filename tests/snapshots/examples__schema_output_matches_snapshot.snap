@@ -65,6 +65,36 @@ expression: schema
     "cv"
   ],
   "$defs": {
+    "CertificateItem": {
+      "description": "One `certificates` item. `name` and `issuer` are literal text (no inline\nMarkdown, ADR-0050); `url` is validated like a contact link (ADR-0017).",
+      "type": "object",
+      "properties": {
+        "issuer": {
+          "description": "Who issued it, e.g. \"Cloud Native Computing Foundation\".",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "name": {
+          "description": "Certification title, e.g. \"Certified Kubernetes Administrator\".",
+          "type": "string"
+        },
+        "url": {
+          "description": "Verification link: an absolute `http(s)` URL.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
     "Color": {
       "type": "string",
       "examples": [
@@ -501,6 +531,26 @@ expression: schema
             "type": {
               "type": "string",
               "const": "text"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "name/issuer/url items (certifications, licenses).",
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/CertificateItem"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "certificates"
             }
           },
           "required": [

@@ -136,10 +136,24 @@ fn every_example_builds_with_every_builtin_template() {
 
             let pages = pdf_extract::extract_text_by_pages(base.join(&out)).expect("extract");
             assert_eq!(pages.len(), 1, "{file} via '{template}' must fit one page");
+            let text = pages.concat();
             assert!(
-                pages.concat().contains("Jane Doe"),
+                text.contains("Jane Doe"),
                 "{file} via '{template}' must contain the name"
             );
+            if file == "full.yaml" {
+                // Certificates are easy to drop silently — an unhandled section type
+                // renders nothing — so pin that every built-in really shows them.
+                // Single words: the rail wraps these lines, whole words do not.
+                assert!(
+                    text.contains("Administrator"),
+                    "'{template}' must render certificate names"
+                );
+                assert!(
+                    text.contains("Foundation"),
+                    "'{template}' must render certificate issuers"
+                );
+            }
             fs::remove_file(base.join(&out)).expect("clean up");
         }
     }

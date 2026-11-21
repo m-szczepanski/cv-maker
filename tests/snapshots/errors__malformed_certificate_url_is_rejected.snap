@@ -1,0 +1,12 @@
+---
+source: tests/errors.rs
+expression: stderr
+---
+  × malformed URL "cncf.io/verify"
+    ╭─[cv.yaml:10:16]
+  9 │           issuer: CNCF
+ 10 │           url: cncf.io/verify
+    ·                ───────┬──────
+    ·                       ╰── this link URL
+    ╰────
+  help: URLs must start with http:// or https:// and include a host

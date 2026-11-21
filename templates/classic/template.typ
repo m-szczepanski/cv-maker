@@ -97,6 +97,21 @@
   ]
 }
 
+// One certificates item: the name in the entry heading's style, with the issuer
+// and verification link on the second line (the entry row's shape without the dates).
+#let certificate(item) = {
+  let second-line = ()
+  if item.issuer != none { second-line.push(text(weight: "semibold", item.issuer)) }
+  if item.url != none {
+    if item.issuer != none { second-line.push(text(fill: muted, " — ")) }
+    second-line.push(link(item.url)[#text(fill: accent, item.url)])
+  }
+  block(spacing: entry-gap, breakable: false)[
+    #text(size: body-size, weight: "bold", font: design.fonts.heading)[#item.name]
+    #if second-line.len() > 0 [#v(-0.1em) #text(size: small-size)[#second-line.join()]]
+  ]
+}
+
 // Sections stay whole on a page (ADR-0046): a section whose measured height fits
 // the content area is wrapped in an unbreakable block, so Typst moves it whole to
 // the next page instead of cutting it mid-list. `measure` is contextual: the page
@@ -133,6 +148,8 @@
     list(..section.items.map(inline), spacing: entry-gap * 0.6, tight: true)
   } else if section.type == "text" {
     for paragraph in section.items { par[#inline(paragraph)] }
+  } else if section.type == "certificates" {
+    for item in section.items { certificate(item) }
   }
   section-heading(section.title) + v(0.45em) + body
 }

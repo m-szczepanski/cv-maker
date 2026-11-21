@@ -55,6 +55,12 @@ cv:
       type: key_values
       items:
         - { key: "Langs #1", value: "Rust $ Go \\ _ @" }
+    - title: "Certificates #4"
+      type: certificates
+      items:
+        - name: "CKA **not bold** #1"
+          issuer: "CNCF $ _ \\ @lit"
+          url: "https://example.org/verify/cka"
 design:
   template: compact
 "##;
@@ -149,5 +155,24 @@ fn the_gdpr_statement_and_key_values_stay_literal() {
     assert!(
         !text.contains("Regulation (EU) 2016/679"),
         "the default clause must be gone once cv.gdpr is set, got:\n{text}"
+    );
+}
+
+/// The `certificates` fields are never Markdown-enabled (ADR-0050): markers and
+/// Typst specials must reach the page exactly as typed, and the URL must render
+/// as its own clickable text.
+#[test]
+fn certificate_fields_stay_literal() {
+    let dir = unique_dir("escaping-certs");
+    let text = build(&dir, "cv.pdf");
+    for literal in ["**not bold**", "CNCF $", "#1"] {
+        assert!(
+            text.contains(literal),
+            "`{literal}` must appear as text, got:\n{text}"
+        );
+    }
+    assert!(
+        text.contains("https://example.org/verify/cka"),
+        "the verification URL renders as text, got:\n{text}"
     );
 }

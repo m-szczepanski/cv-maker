@@ -62,6 +62,22 @@ impl Cv {
             .unwrap_or_default()
     }
 
+    /// Every `(section index, item index, url)` triple from the `url` fields of
+    /// `certificates` items, in order — for URL validation.
+    pub fn certificate_urls(&self) -> Vec<(usize, usize, &str)> {
+        let mut urls = Vec::new();
+        for (section, item) in self.sections.iter().enumerate() {
+            if let SectionBody::Certificates { items } = &item.body {
+                for (index, cert) in items.iter().enumerate() {
+                    if let Some(url) = &cert.url {
+                        urls.push((section, index, url.as_str()));
+                    }
+                }
+            }
+        }
+        urls
+    }
+
     /// Every text that carries the inline Markdown subset (ADR-0016): the summary, the
     /// bullets of `entries` items, and the items of `bullets` and `text` sections —
     /// each with the path the span scan addresses it by, so a problem found in the
@@ -96,7 +112,7 @@ impl Cv {
                         });
                     }
                 }
-                SectionBody::KeyValues { .. } => {}
+                SectionBody::KeyValues { .. } | SectionBody::Certificates { .. } => {}
             }
         }
         fields
@@ -147,7 +163,7 @@ pub struct Section {
 /// The closed set of section types for v1 (spec §4).
 ///
 /// Modeled as an internally tagged enum keyed on the YAML `type` field so the schema shows
-/// exactly the four allowed values. Unknown keys inside a variant are rejected by the
+/// exactly the five allowed values. Unknown keys inside a variant are rejected by the
 /// variant structs' `deny_unknown_fields`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -171,6 +187,11 @@ pub enum SectionBody {
     Text {
         #[serde(default)]
         items: Vec<String>,
+    },
+    /// name/issuer/url items (certifications, licenses).
+    Certificates {
+        #[serde(default)]
+        items: Vec<CertificateItem>,
     },
 }
 
@@ -197,4 +218,19 @@ pub struct EntryItem {
 pub struct KeyValueItem {
     pub key: String,
     pub value: String,
+}
+
+/// One `certificates` item. `name` and `issuer` are literal text (no inline
+/// Markdown, ADR-0050); `url` is validated like a contact link (ADR-0017).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CertificateItem {
+    /// Certification title, e.g. "Certified Kubernetes Administrator".
+    pub name: String,
+    /// Who issued it, e.g. "Cloud Native Computing Foundation".
+    #[serde(default)]
+    pub issuer: Option<String>,
+    /// Verification link: an absolute `http(s)` URL.
+    #[serde(default)]
+    pub url: Option<String>,
 }

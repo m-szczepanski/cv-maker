@@ -185,6 +185,22 @@ fn malformed_link_url_is_rejected() {
     insta::assert_snapshot!(stderr);
 }
 
+/// A certificate URL follows the strict contact-link rule (ADR-0017): the same
+/// rejection, labeled at the URL inside the item (ADR-0050).
+#[test]
+fn malformed_certificate_url_is_rejected() {
+    let (ok, _, stderr) = check_broken(
+        "bad-cert-url",
+        concat!(
+            "schema: 1\ncv:\n  name: Jane Doe\n  sections:\n",
+            "    - title: Certificates\n      type: certificates\n      items:\n",
+            "        - name: CKA\n          issuer: CNCF\n          url: cncf.io/verify\n",
+        ),
+    );
+    assert!(!ok);
+    insta::assert_snapshot!(stderr);
+}
+
 /// A Markdown link with an empty target used to pass `cv check` and then fail
 /// `cv build` as a *template* error; the exporter really does refuse it, so `cv check`
 /// reports it as the user error it is (ADR-0033).

@@ -94,6 +94,10 @@ pub enum SectionBodyData<'a> {
     Text {
         items: Vec<MdString<'a>>,
     },
+    /// Literal strings, passed through verbatim (ADR-0050).
+    Certificates {
+        items: Vec<&'a crate::model::CertificateItem>,
+    },
 }
 
 impl<'a> From<&'a crate::model::SectionBody> for SectionBodyData<'a> {
@@ -110,6 +114,9 @@ impl<'a> From<&'a crate::model::SectionBody> for SectionBodyData<'a> {
             },
             crate::model::SectionBody::Text { items } => Self::Text {
                 items: items.iter().map(|t| MdString(t.as_str())).collect(),
+            },
+            crate::model::SectionBody::Certificates { items } => Self::Certificates {
+                items: items.iter().collect(),
             },
         }
     }
@@ -291,6 +298,12 @@ mod tests {
         "      type: text\n",
         "      items:\n",
         "        - writes **docs**\n",
+        "    - title: Certificates\n",
+        "      type: certificates\n",
+        "      items:\n",
+        "        - name: CKA **not bold**\n",
+        "          issuer: CNCF *not italic*\n",
+        "          url: https://example.org/verify/cka\n",
         "design:\n",
         "  template: compact\n",
     );
@@ -342,6 +355,27 @@ mod tests {
         );
         assert!(yaml.contains("key: Rust"), "keys stay plain");
         assert!(yaml.contains("value: strong"), "values stay plain");
+    }
+
+    /// The `certificates` items reach the template as literal strings under the
+    /// `certificates` type tag — Markdown markers included, never tokenized
+    /// (ADR-0050).
+    #[test]
+    fn certificate_items_serialize_verbatim_under_the_certificates_tag() {
+        let doc = Document::from_yaml_str(SOURCE).expect("fixture parses");
+        let yaml = to_yaml(&doc.cv, &doc.design);
+        assert!(
+            yaml.contains("type: certificates"),
+            "the type tag reaches the template, got:\n{yaml}"
+        );
+        assert!(
+            yaml.contains("**not bold**") && yaml.contains("*not italic*"),
+            "names and issuers stay literal text, got:\n{yaml}"
+        );
+        assert!(
+            yaml.contains("url: https://example.org/verify/cka"),
+            "the verification URL passes through, got:\n{yaml}"
+        );
     }
 
     #[test]

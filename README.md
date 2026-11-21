@@ -126,10 +126,11 @@ cv check                 # or just validate, no PDF
 | `key_values` | skills, one-line pairs | `key`, `value` |
 | `bullets` | awards, highlights | plain strings |
 | `text` | paragraphs, a note | plain strings |
+| `certificates` | certifications, licenses | `name`, `issuer`, `url` |
 
 Every field is optional except `cv.name`, a section's `title`, and the fields an item
-needs to render: `heading` for `entries`, `key` and `value` for `key_values`, `label`
-and `url` for a link. `schema: 1` is required and stays `1`.
+needs to render: `heading` for `entries`, `key` and `value` for `key_values`, `name` for
+`certificates`, `label` and `url` for a link. `schema: 1` is required and stays `1`.
 
 ### A little formatting
 
@@ -144,10 +145,12 @@ In `summary`, in the bullets of an `entries` item, and in the items of `bullets`
 | `[label](https://example.dev)` | a hyperlink |
 
 Anything else is literal text — hashes, dollar signs, underscores and backslashes in a
-job title stay exactly as you typed them. Headings, organisations, dates and section
-titles are always literal. A link target needs to be an absolute URL for a PDF reader to
-open it (`https://example.dev`, `mailto:jane@example.dev`); a bare `github.com/me` warns,
-and an empty `[label]()` is an error, because the export refuses it.
+job title stay exactly as you typed them. Headings, organisations, dates, certificate
+names and issuers, and section titles are always literal. A link target needs to be an
+absolute URL for a PDF reader to open it (`https://example.dev`,
+`mailto:jane@example.dev`); a bare `github.com/me` warns, and an empty `[label]()` is
+an error, because the export refuses it. A certificate's `url` is held to the stricter
+contact-link rule: absolute `http(s)` with a host, or the check fails.
 
 ---
 

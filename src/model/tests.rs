@@ -22,7 +22,7 @@ fn starter_yaml_parses_end_to_end() -> Result<()> {
     assert_eq!(links.len(), 2);
     assert_eq!(links[0].label, "GitHub");
 
-    assert_eq!(doc.cv.sections.len(), 3);
+    assert_eq!(doc.cv.sections.len(), 4);
 
     match &doc.cv.sections[0].body {
         crate::model::SectionBody::Entries { items } => {
@@ -39,6 +39,23 @@ fn starter_yaml_parses_end_to_end() -> Result<()> {
             assert_eq!(items[0].value, "Rust, Go, Python, TypeScript");
         }
         other => panic!("expected key_values, got {other:?}"),
+    }
+    match &doc.cv.sections[2].body {
+        crate::model::SectionBody::Certificates { items } => {
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[0].name, "Certified Kubernetes Administrator");
+            assert_eq!(
+                items[0].url.as_deref(),
+                Some("https://example.org/verify/cka")
+            );
+            assert_eq!(
+                items[1].issuer.as_deref(),
+                Some("Amazon Web Services"),
+                "the starter also shows the optional url"
+            );
+            assert_eq!(items[1].url, None);
+        }
+        other => panic!("expected certificates, got {other:?}"),
     }
 
     // Design values round-trip through the strict value types.
@@ -169,6 +186,83 @@ fn wrong_section_type_is_rejected() {
     assert!(
         msg.contains("gallery") || msg.contains("type") || msg.contains("unknown variant"),
         "error should identify the bad type, got: {err}"
+    );
+}
+
+#[test]
+fn certificates_section_parses_full_and_minimal_items() -> Result<()> {
+    let yaml = concat!(
+        "schema: 1\ncv:\n  name: Jane Doe\n  sections:\n",
+        "    - title: Certificates\n      type: certificates\n      items:\n",
+        "        - name: Certified Kubernetes Administrator\n",
+        "          issuer: Cloud Native Computing Foundation\n",
+        "          url: https://example.org/verify/cka\n",
+        "        - name: AWS Certified Solutions Architect\n",
+        "          issuer: Amazon Web Services\n",
+    );
+    let doc = Document::from_yaml_str(yaml)?;
+    match &doc.cv.sections[0].body {
+        crate::model::SectionBody::Certificates { items } => {
+            assert_eq!(items[0].name, "Certified Kubernetes Administrator");
+            assert_eq!(
+                items[0].issuer.as_deref(),
+                Some("Cloud Native Computing Foundation")
+            );
+            assert_eq!(
+                items[0].url.as_deref(),
+                Some("https://example.org/verify/cka")
+            );
+            assert_eq!(items[1].issuer.as_deref(), Some("Amazon Web Services"));
+            assert_eq!(items[1].url, None, "the verification link is optional");
+        }
+        other => panic!("expected certificates, got {other:?}"),
+    }
+    Ok(())
+}
+
+#[test]
+fn certificate_urls_address_the_sections_and_items_that_carry_them() {
+    let yaml = concat!(
+        "schema: 1\ncv:\n  name: Jane Doe\n  sections:\n",
+        "    - title: Skills\n      type: key_values\n",
+        "      items: [{ key: Rust, value: strong }]\n",
+        "    - title: Certificates\n      type: certificates\n      items:\n",
+        "        - name: No link here\n",
+        "        - name: Linked\n          url: https://example.org/a\n",
+    );
+    let doc = Document::from_yaml_str(yaml).expect("fixture parses");
+    assert_eq!(
+        doc.cv.certificate_urls(),
+        vec![(1, 1, "https://example.org/a")],
+        "the indices are the source positions, so the diagnostic can label the span"
+    );
+}
+
+#[test]
+fn certificate_item_with_no_name_is_rejected() {
+    let yaml = concat!(
+        "schema: 1\ncv:\n  name: Jane Doe\n  sections:\n",
+        "    - title: Certificates\n      type: certificates\n      items:\n",
+        "        - issuer: Acme\n"
+    );
+    assert!(
+        Document::from_yaml_str(yaml).is_err(),
+        "name is the one required certificate field"
+    );
+}
+
+#[test]
+fn unknown_key_inside_certificate_item_is_rejected() {
+    let yaml = concat!(
+        "schema: 1\ncv:\n  name: Jane Doe\n  sections:\n",
+        "    - title: Certificates\n      type: certificates\n      items:\n",
+        "        - name: CKA\n          expiry: 2027\n"
+    );
+    let err = Document::from_yaml_str(yaml).expect_err("unknown certificate key must fail");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("expiry") || msg.contains("unknown field"),
+        "error should mention the unknown certificate key, got: {msg}"
     );
 }
 
@@ -331,6 +425,8 @@ fn markdown_texts_lists_the_markdown_fields_in_source_order() -> Result<()> {
         "      items: [{ key: K, value: V }]\n",
         "    - title: B\n      type: bullets\n      items: [flat]\n",
         "    - title: T\n      type: text\n      items: [para]\n",
+        "    - title: C\n      type: certificates\n",
+        "      items: [{ name: Not **md**, issuer: No *md*, url: https://x.dev/a }]\n",
     );
     let doc = Document::from_yaml_str(yaml)?;
     let listed: Vec<(String, &str)> = doc
@@ -348,7 +444,8 @@ fn markdown_texts_lists_the_markdown_fields_in_source_order() -> Result<()> {
             ("cv.sections[2].items[0]".to_owned(), "flat"),
             ("cv.sections[3].items[0]".to_owned(), "para"),
         ],
-        "headings, orgs, keys and titles are not Markdown fields (ADR-0016)"
+        "headings, orgs, keys, certificate fields and titles are not Markdown fields \
+         (ADR-0016, ADR-0050)"
     );
     Ok(())
 }
