@@ -559,7 +559,7 @@ fn the_fit_loop_drives_custom_templates_too() {
         &dir.join("my-template"),
     );
     let mut items = String::new();
-    for i in 0..14 {
+    for i in 0..20 {
         items.push_str(&format!(
             "    - heading: Role {i}\n      org: Org {i}\n      bullets:\n        - Achievement number {i}.1 with realistic wording\n        - Achievement number {i}.2 with realistic wording\n"
         ));

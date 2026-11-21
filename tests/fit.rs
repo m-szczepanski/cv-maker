@@ -65,7 +65,7 @@ fn sections_yaml(entries_per_section: &[usize]) -> String {
 #[test]
 fn overflowing_cv_fits_after_shrinking() {
     let dir = unique_dir("fit-shrink");
-    fs::write(dir.join("cv.yaml"), cv_yaml(14, 2)).expect("write yaml");
+    fs::write(dir.join("cv.yaml"), cv_yaml(18, 2)).expect("write yaml");
 
     let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
     assert!(ok, "the fitting build must succeed, got: {out}");
@@ -108,7 +108,7 @@ fn short_cv_is_not_shrunk() {
 #[test]
 fn fitted_builds_are_deterministic() {
     let dir = unique_dir("fit-determinism");
-    fs::write(dir.join("cv.yaml"), cv_yaml(14, 2)).expect("write yaml");
+    fs::write(dir.join("cv.yaml"), cv_yaml(18, 2)).expect("write yaml");
 
     let (ok, a) = run_cv(&dir, &["build", "--output", "a.pdf"]);
     let (ok2, b) = run_cv(&dir, &["build", "--output", "b.pdf"]);
@@ -153,7 +153,7 @@ fn the_fit_loop_shrinks_classic_like_compact() {
 #[test]
 fn fitted_scales_never_cross_the_floors() {
     let dir = unique_dir("fit-floors");
-    fs::write(dir.join("cv.yaml"), cv_yaml(14, 2)).expect("write yaml");
+    fs::write(dir.join("cv.yaml"), cv_yaml(18, 2)).expect("write yaml");
 
     let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
     assert!(ok, "got: {out}");
@@ -215,7 +215,7 @@ fn verbose_reports_the_compile_count() {
 #[test]
 fn no_fit_flag_skips_the_loop() {
     let dir = unique_dir("fit-nofit-flag");
-    fs::write(dir.join("cv.yaml"), cv_yaml(14, 2)).expect("write yaml");
+    fs::write(dir.join("cv.yaml"), cv_yaml(18, 2)).expect("write yaml");
 
     let (ok, out) = run_cv(&dir, &["build", "--no-fit", "--output", "cv.pdf"]);
     assert!(ok, "got: {out}");
@@ -236,7 +236,7 @@ fn no_fit_flag_skips_the_loop() {
 #[test]
 fn design_fit_one_page_false_skips_the_loop() {
     let dir = unique_dir("fit-design-off");
-    let yaml = cv_yaml(14, 2) + "\ndesign:\n  fit_one_page: false\n";
+    let yaml = cv_yaml(18, 2) + "\ndesign:\n  fit_one_page: false\n";
     fs::write(dir.join("cv.yaml"), yaml).expect("write yaml");
 
     let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
@@ -310,7 +310,7 @@ fn two_page_target_does_not_shrink_content_that_fits_two_pages() {
 #[test]
 fn overflow_warning_counts_pages_past_the_target() {
     let dir = unique_dir("fit-overflow-two-pages");
-    let yaml = sections_yaml(&[10, 10, 10, 10]) + "\ndesign:\n  pages: 2\n";
+    let yaml = sections_yaml(&[10, 10, 10, 10, 10]) + "\ndesign:\n  pages: 2\n";
     fs::write(dir.join("cv.yaml"), yaml).expect("write yaml");
 
     let (ok, out) = run_cv(&dir, &["--verbose", "build", "--output", "cv.pdf"]);
@@ -417,12 +417,12 @@ fn the_gdpr_statement_renders_on_the_last_page() {
 }
 
 /// The GDPR clause counts as page content in the fitting loop (ADR-0045): this
-/// fifteen-entry CV fits one page exactly as written once the clause is removed,
+/// twenty-three-entry CV fits one page exactly as written once the clause is removed,
 /// and with the standard clause the loop tightens spacing and margins to keep
 /// everything — statement included — on that one page.
 #[test]
 fn the_gdpr_clause_tips_the_fit_into_tightening() {
-    let with_clause = cv_yaml(15, 1);
+    let with_clause = cv_yaml(23, 1);
     let without_clause =
         with_clause.replace("  name: Jane Doe\n", "  name: Jane Doe\n  gdpr: null\n");
 
@@ -439,7 +439,7 @@ fn the_gdpr_clause_tips_the_fit_into_tightening() {
     let (ok, out) = run_cv(&dir, &["build", "--output", "clause.pdf"]);
     assert!(ok, "got: {out}");
     assert!(
-        out.contains("1 page  fit: scale 1.00 spacing 0.93 margins 0.97"),
+        out.contains("1 page  fit: scale 1.00 spacing 0.94 margins 0.97"),
         "the clause alone must tip the loop into tightening spacing and margins, got: {out}"
     );
     assert!(

@@ -1026,6 +1026,44 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   they already have for any type they miss. The deviation from the literal "of type
   entries" wording is flagged for the owner's review.
 
+## ADR-0051 — the compact template's entry rhythm: Typst collapses spacing to a maximum
+
+- **Context:** The owner built their real CV with `compact` and found the Experience
+  section unreadable: the gap between one entry's last bullet and the next entry
+  heading was "almost non-existent", while the lines *inside* one entry were further
+  apart from each other than entries were — the hierarchy was inverted. Two mechanisms,
+  both verified against the pinned Typst 0.15.1 by reading text-span baselines out of
+  the PDF content stream:
+  1. Adjacent flow spacing collapses to the **maximum**, so touching
+     `block(spacing: entry-gap)` entries separate by exactly one `entry_gap` (4pt):
+     measured 10.9pt between-entry baseline distance against 8.9pt bullet pitch.
+  2. Inside an entry, the heading grid and the midline paragraph are separated by the
+     global `par` spacing (≈1em, 10.7pt), and the bullet list opens with that same
+     slack: measured heading→midline 16.9pt and midline→first bullet 20.5pt — bigger
+     than the between-entry gap itself, so an entry read as three detached lines and
+     the next heading attached itself to the previous bullet list.
+- **Decision:** Both fixes live in the compact template, where the rhythm is its
+  business: `between-entries = entry-gap * 2` as the entry and certificate block
+  spacing, and a scoped `set par(spacing: entry-gap * 0.5)` inside those blocks that
+  pulls heading, midline and bullets into one unit (the `v(0.3em)` before the list
+  goes away with it). Bullet spacing stays `entry-gap * 0.5`. Measured at the defaults:
+  within-entry ≈ bullets ≈ 8.9pt < entries 14.2pt < section boundaries 16pt plus the
+  accented heading — a visible hierarchy. `entry_gap` keeps its spec §5 meaning and the
+  fit loop's `spacing_scale` still multiplies everything proportionally. The other
+  built-ins share the collapse and the inverted interior; the owner uses `compact`, so
+  they are deliberately left for a separate review rather than retuned here.
+- **Consequences:** Compact CVs got noticeably denser per entry, so every fit-loop
+  fixture that relies on a specific overflow point was re-tuned to measured values:
+  the GDPR tipping case now needs 23 entries (bare → `scale 1.00`, clause → `spacing
+  0.94 margins 0.97`), the shrink / `--no-fit` / `fit_one_page: false` / floor cases
+  use 18×2-bullet CVs (two pages natural, one page fitted), the custom-template copy
+  uses 20×2, and the overflow-warning case five 10-entry sections against a two-page
+  target. A new integration test (`tests/entry_gaps.rs`) measures baselines from the
+  PDF content stream and pins that the between-entry distance exceeds **both** the
+  bullet pitch and the heading→midline distance by a full `entry_gap` — each half
+  fails against the pre-fix template — and that raising the design `entry_gap` still
+  widens the separation proportionally.
+
 ## Open questions (spec §14) — status
 
 All closed as of M6; each carries the ADR that resolved it.
