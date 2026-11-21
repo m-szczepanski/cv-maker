@@ -3,10 +3,10 @@
 //! The typed model parse (serde) already rejects unknown keys, wrong types and malformed
 //! lengths/colors — those surface as parse-time diagnostics. This module runs afterwards
 //! and checks *values*: schema version, template reference (built-in name or custom
-//! folder, plan 5.3), font families, contact and Markdown link URLs, duplicate section
-//! titles, and design fields the chosen template declares unsupported (plan 3.5) or
-//! whose manifest contradicts the template sources (plan 5.4). All errors of all checks
-//! are collected, not just the first (spec §5).
+//! folder, plan 5.3), font families, contact, certificate and Markdown link URLs,
+//! duplicate section titles, and design fields the chosen template declares unsupported
+//! (plan 3.5) or whose manifest contradicts the template sources (plan 5.4). All errors
+//! of all checks are collected, not just the first (spec §5).
 
 pub mod spans;
 
@@ -261,18 +261,39 @@ fn check_urls(
             continue;
         }
         let path = format!("cv.contact.links[{index}].url");
-        let message = format!("malformed URL \"{url}\"");
-        let diag = diag_at(
-            spans,
-            source,
-            &path,
-            message,
-            "this link URL",
-            Severity::Error,
-        )
-        .with_help("URLs must start with http:// or https:// and include a host");
-        result.errors.push(diag);
+        result
+            .errors
+            .push(malformed_url_diag(&path, url, spans, source));
     }
+    for (section, item, url) in cv.certificate_urls() {
+        if is_well_formed_url(url) {
+            continue;
+        }
+        let path = format!("cv.sections[{section}].items[{item}].url");
+        result
+            .errors
+            .push(malformed_url_diag(&path, url, spans, source));
+    }
+}
+
+/// The strict contact-link URL rule (ADR-0017), shared by contact links and
+/// certificate URLs: the PDF should never carry a dead verification link.
+fn malformed_url_diag(
+    path: &str,
+    url: &str,
+    spans: &spans::SpanMap,
+    source: &miette::NamedSource<String>,
+) -> Diag {
+    let message = format!("malformed URL \"{url}\"");
+    diag_at(
+        spans,
+        source,
+        path,
+        message,
+        "this link URL",
+        Severity::Error,
+    )
+    .with_help("URLs must start with http:// or https:// and include a host")
 }
 
 fn check_duplicate_titles(
@@ -513,6 +534,48 @@ mod tests {
     fn rejects_urls_with_spaces_or_control_characters() {
         assert!(!is_well_formed_url("https://exa mple.dev"));
         assert!(!is_well_formed_url("https://example.dev/\n"));
+    }
+
+    /// Certificate URLs follow the strict contact-link rule (ADR-0017): the same
+    /// message, the same help, and a span label at the URL that failed.
+    #[test]
+    fn certificate_urls_are_checked_like_contact_links() {
+        let yaml = concat!(
+            "schema: 1\ncv:\n  name: X\n  sections:\n",
+            "    - title: Certificates\n      type: certificates\n      items:\n",
+            "        - name: Fine\n          url: https://ok.dev/a\n",
+            "        - name: Bare host\n          url: github.com/x\n",
+            "        - name: No link at all\n",
+        );
+        let document = crate::model::Document::from_yaml_str(yaml).expect("parses");
+        let spans = spans::scalar_spans(yaml);
+        let source = miette::NamedSource::new("cv.yaml", yaml.to_owned());
+        let mut result = Checks::default();
+        check_urls(&document.cv, &spans, &source, &mut result);
+
+        assert_eq!(
+            messages(&result.errors),
+            ["malformed URL \"github.com/x\""],
+            "only the malformed URL is reported; a missing one is fine"
+        );
+        let diag = &result.errors[0];
+        assert!(
+            diag.labels.len() == 1,
+            "the bad URL is labeled at its own span"
+        );
+        let label = diag.labels.first().expect("span-labeled");
+        let start = label.offset();
+        assert_eq!(
+            &yaml[start..start + label.len()],
+            "github.com/x",
+            "the label covers the URL value, not the whole item"
+        );
+        assert!(
+            diag.help
+                .as_deref()
+                .is_some_and(|h| h.contains("http:// or https://")),
+            "the help repeats the URL rule"
+        );
     }
 
     /// A Markdown destination is followable when it carries a scheme and a target:

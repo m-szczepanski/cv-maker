@@ -8,7 +8,9 @@ pub mod content;
 pub mod design;
 pub mod value;
 
-pub use content::{Contact, Cv, EntryItem, KeyValueItem, Link, MarkdownText, Section, SectionBody};
+pub use content::{
+    CertificateItem, Contact, Cv, EntryItem, KeyValueItem, Link, MarkdownText, Section, SectionBody,
+};
 pub use design::{Colors, Design, FitFloor, Fonts, Margins, Page, Sizes, Spacing};
 pub use value::{Color, Length, LengthUnit, LineHeight};
 

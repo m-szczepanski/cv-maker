@@ -48,6 +48,14 @@ cv:
       items:
         - { key: Languages, value: "Rust, Go, Python, TypeScript" }
         - { key: Infrastructure, value: "Kubernetes, Postgres, Kafka" }
+    - title: Certificates
+      type: certificates
+      items:
+        - name: Certified Kubernetes Administrator
+          issuer: Cloud Native Computing Foundation
+          url: https://example.org/verify/cka
+        - name: AWS Certified Solutions Architect
+          issuer: Amazon Web Services
     - title: Education
       type: entries
       items:
