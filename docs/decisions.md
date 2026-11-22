@@ -1136,10 +1136,12 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   The `pages: N > 1` machinery (settle, stretch, underfilled warnings) is untouched.
 - **Consequences:** Spec §7's "A one-page target never fills" sentence and its
   ADR-0044 scoping are superseded, rewritten in the same change. A fitting one-page
-  build now costs 2–19 compiles instead of 1 (a nearly-full page stops after the
-  spacing stage's 6 probes; a half-full one chains further; a too-short one pays
-  the cap stages and stops at the caps) — build-time-bound M4's "<500 ms typical"
-  applies to the tightening path; filled runs are ~1–3 s in debug builds, accepted
+  build now costs 7–19 compiles instead of 1 — the spacing stage always runs its
+  full grid, so even an exactly-full page pays 1 + 5 + 1 probes to learn that
+  nothing above the identity fits (a nearly-full page stops there; a half-full
+  one chains further; a too-short one pays the cap stages and stops at the
+  caps) — build-time-bound M4's "<500 ms typical" applies to the tightening
+  path; filled runs are ~1–3 s in debug builds, accepted
   for the fill guarantee. Success lines for filled pages show `spacing > 1.00`
   (README examples extended). Two existing expectations moved with the policy: the
   GDPR-tipping "bare" case now lands on a grown spacing scale, and
