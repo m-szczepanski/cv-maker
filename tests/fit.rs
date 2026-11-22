@@ -370,7 +370,7 @@ fn overflow_warning_counts_pages_past_the_target() {
 #[test]
 fn a_sparse_two_page_cv_is_filled_by_grown_scales() {
     let dir = unique_dir("fit-fill");
-    let yaml = sections_yaml(&[13]) + "\ndesign:\n  pages: 2\n";
+    let yaml = sections_yaml(&[12]) + "\ndesign:\n  pages: 2\n";
     fs::write(dir.join("cv.yaml"), yaml).expect("write yaml");
 
     let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
@@ -405,7 +405,7 @@ fn a_two_page_target_stretches_past_the_fill_caps_to_land_exactly_on_two_pages()
         "the target page count is delivered exactly, got: {out}"
     );
     assert!(
-        out.contains("fit: scale 1.25 spacing 9.47 margins 1.40"),
+        out.contains("fit: scale 1.25 spacing 7.78 margins 1.40"),
         "the gentlest stretching bisection lands the two-page landing, got: {out}"
     );
     assert!(
@@ -419,7 +419,7 @@ fn a_two_page_target_stretches_past_the_fill_caps_to_land_exactly_on_two_pages()
 #[test]
 fn content_too_short_for_the_target_warns_instead_of_faking_pages() {
     let dir = unique_dir("fit-underfill");
-    let yaml = cv_yaml(3, 1) + "design:\n  pages: 2\n";
+    let yaml = cv_yaml(1, 1) + "design:\n  pages: 2\n";
     fs::write(dir.join("cv.yaml"), yaml).expect("write yaml");
 
     let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
@@ -543,7 +543,7 @@ fn the_gdpr_clause_tips_the_fit_into_tightening() {
     let (ok, out) = run_cv(&dir, &["build", "--output", "clause.pdf"]);
     assert!(ok, "got: {out}");
     assert!(
-        out.contains("1 page  fit: scale 1.00 spacing 0.94 margins 0.97"),
+        out.contains("1 page  fit: scale 1.00 spacing 0.91 margins 0.96"),
         "the clause alone must tip the loop into tightening spacing and margins, got: {out}"
     );
     assert!(

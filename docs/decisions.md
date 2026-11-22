@@ -1152,6 +1152,31 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   one page caps at the ordinary limits without stretching, and an exactly-full page
   keeps the identity.
 
+## ADR-0054 — the GDPR footer's minimum gap is 2× the section spacing
+
+- **Context:** The footer's pin has been `v(0.9em) #v(1fr)` since ADR-0045: the
+  stretchable space keeps it at the bottom margin, the 0.9em is only the minimum
+  slack when the page is full. With one-page fills (ADR-0053) full pages became
+  the normal case, and 0.9em ≈ 8.6pt is essentially one section gap — the owner's
+  CV read as if the consent clause were the last section's tail line. The ask:
+  keep it pinned at the bottom, but with a gap above that clearly separates it.
+- **Decision:** All five built-ins render `v(section-gap * 2)` before `v(1fr)`.
+  The value rides the rhythm like every other spacing (the fit loop's
+  `spacing_scale` multiplies it), so the separation stays proportional whether
+  the page tightened, kept its defaults, or grew to the fill caps; a fixed larger
+  em would shrink relative to a filled layout and read as a hairline. The stretch
+  space itself is untouched — the pinning rule of ADR-0045 stands.
+- **Consequences:** Four fit fixtures moved to re-measured landings, the same
+  class of retune ADR-0051 recorded: the GDPR-tipping clause case now lands
+  `spacing 0.91 margins 0.96` (was 0.94/0.97 — the larger guaranteed gap eats
+  the page sooner); the capped-sparse fixture went 13→12 entries (13 overflowed
+  its 2-page target at the spacing cap); the exact-stretch landing moved
+  `9.47 → 7.78`; and the too-short fixture went 3→1 entries, because two entries
+  plus the proportional gap now do span the two-page target when stretched. That
+  last case is the flip side of the decision: a stretched multi-page footer gap
+  is `2 × section_gap × spacing_scale` wide too — consistent with the stretched
+  rhythm around it, which is the point.
+
 ## Open questions (spec §14) — status
 
 All closed as of M6; each carries the ADR that resolved it.

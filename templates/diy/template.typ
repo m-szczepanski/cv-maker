@@ -405,9 +405,12 @@
 
 // GDPR consent statement (ADR-0045): the user's own legal wording, always literal
 // text, pinned to the bottom of the last page by the stretchable space above it.
+// The minimum gap is 2× section spacing — a fixed em slack collapsed to near a
+// normal section break on a full page and made the statement read as the previous
+// section's tail; the stretch space stays untouched.
 // In sidebar layouts it aligns with the main column, clear of the rail tint.
 #if cv.gdpr != none [
-  #v(0.9em)
+  #v(section-gap * 2)
   #v(1fr)
   #let gdpr-line = block(spacing: 0pt, breakable: false)[
     #text(size: small-size, fill: muted)[#cv.gdpr]
