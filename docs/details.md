@@ -322,10 +322,11 @@ than `design.pages` pages (default 1):
    the `design.pages` target — and what to change (cut content, or set `design.pages` to the
    reached count) (ADR-0052).
 
-When a compile lands **under** the target page count — the first compile already fits with room
-to spare, or tightening overshot — the loop grows toward exactly `design.pages` (ADR-0044,
-ADR-0052): content spread thinly over fewer pages than configured is a broken layout and a
-silently violated page contract. Growth happens in bounded searches, each stage entered only
+When the first compile **fits** the target — any target, the default one page
+included (ADR-0044, ADR-0053) — or a tightened compile lands **under** a multi-page
+target, the loop grows toward using the page up (ADR-0052 makes the count exact):
+content spread thinly over the space it has is a broken layout, and fewer pages than
+configured is a silently violated page contract. Growth happens in bounded searches, each stage entered only
 when the previous one ended at its cap with the document still fitting within the target —
 `spacing_scale`, then `font_scale`, then `margin_scale`, each to the largest value whose compile
 still fits. If the capped growth still leaves the pages short of the target, a final bounded
@@ -335,7 +336,9 @@ the ordinary spacing cap and at most that 12× sanity bound). A stretch that jum
 sections moving several pages at once) or a ceiling that still cannot span it ships the last
 under-target compile with a clear warning naming the reachable count (ADR-0052). The ordinary
 caps (spacing 3.0, font 1.25, margins 1.4) are preferences for normal growth, not a stretch
-limit. A one-page target never fills: its layout stays the top-flow identity.
+limit. A document can never land under a one-page count, so the past-caps stretch applies
+only to `design.pages` above 1: a one-page fill stops at the ordinary caps, and content far
+below the page keeps its remaining slack rather than being stretched twelve-fold.
 
 Hard requirements:
 
@@ -345,6 +348,8 @@ Hard requirements:
   searches after it.
 - Never go below the floor.
 - Never shrink if the first compile already fits within `design.pages`.
+- A fitting first compile fills a one-page target too (ADR-0053): growth takes the
+  largest settings that still fit the single page and never grows into a second one.
 - The result is deterministic.
 - Fit scale factors are passed to the template through the `fit` object; templates multiply their own sizes and spacings by them.
 - The final output line reports the applied scales.
@@ -428,7 +433,7 @@ Required tests:
 - **Schema:** `cv schema` output matches a committed snapshot; the example files validate against it.
 - **Errors:** snapshot tests for common mistakes (unknown key, bad font, bad color, missing required field, wrong type) asserting the line and column.
 - **Escaping:** content with `#`, `$`, `*`, `_`, `\`, `@`, backticks, and Typst-looking code must render as literal text and never execute.
-- **Fit loop:** an overflowing CV fits after fitting; an impossible CV hits the floor and warns; a short CV is not shrunk.
+- **Fit loop:** an overflowing CV fits after fitting; an impossible CV hits the floor and warns; a short CV is not shrunk but grown to use the page (ADR-0053).
 - **Determinism:** two builds of the same input produce byte-identical PDFs.
 - **Atomic write:** a failed build leaves any existing PDF untouched.
 
