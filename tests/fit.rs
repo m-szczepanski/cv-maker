@@ -88,8 +88,9 @@ fn overflowing_cv_fits_after_shrinking() {
     );
 }
 
-/// Plan 4.5 hard requirement: a CV that already fits is never shrunk, at the
-/// original (single-scale) line.
+/// Plan 4.5 hard requirement: a CV that already fits is never shrunk — and
+/// since ADR-0053 it is grown to use the page instead of top-flowing with a
+/// gap.
 #[test]
 fn short_cv_is_not_shrunk() {
     let dir = unique_dir("fit-untouched");
@@ -97,9 +98,35 @@ fn short_cv_is_not_shrunk() {
 
     let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
     assert!(ok, "got: {out}");
+    assert!(out.contains("1 page"), "got: {out}");
+    for shrunk in ["scale 0.", "spacing 0.", "margins 0."] {
+        assert!(
+            !out.contains(shrunk),
+            "a first-fit CV must never shrink, got: {out}"
+        );
+    }
+}
+
+/// ADR-0053: a one-page CV with room to spare is grown, not left top-flowing
+/// under the GDPR footer — the fill lands above the designed scales and the
+/// page count stays exactly one.
+#[test]
+fn a_short_one_page_cv_fills_its_page() {
+    let dir = unique_dir("fit-fill-one-page");
+    fs::write(dir.join("cv.yaml"), cv_yaml(4, 1)).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
+    assert!(ok, "got: {out}");
+    let note = fit_note_of(&out);
     assert!(
-        out.contains("1 page") && out.contains("fit: scale 1.00"),
-        "a first-fit CV must report scale 1.00 without tightening details, got: {out}"
+        !note.contains("spacing 1.00"),
+        "the slack must be filled: the spacing scale grew, got: {note}"
+    );
+    let pages = pdf_extract::extract_text_by_pages(dir.join("cv.pdf")).expect("extract");
+    assert_eq!(
+        pages.len(),
+        1,
+        "filling must never push the footer to a second page, log: {note}"
     );
 }
 
@@ -503,9 +530,13 @@ fn the_gdpr_clause_tips_the_fit_into_tightening() {
     fs::write(dir.join("cv.yaml"), without_clause).expect("write yaml");
     let (ok, out) = run_cv(&dir, &["build", "--output", "bare.pdf"]);
     assert!(ok, "got: {out}");
+    let bare_note = fit_note_of(&out);
     assert!(
-        out.contains("1 page  fit: scale 1.00  ("),
-        "without the clause the content fits as written, got: {out}"
+        out.contains("1 page")
+            && !bare_note.contains("scale 0.")
+            && !bare_note.contains("spacing 0.")
+            && !bare_note.contains("margins 0."),
+        "without the clause the content fits and is only grown, got: {bare_note}"
     );
 
     fs::write(dir.join("cv.yaml"), with_clause).expect("write yaml");

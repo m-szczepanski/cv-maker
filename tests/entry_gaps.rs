@@ -28,7 +28,10 @@ fn unique_dir(name: &str) -> PathBuf {
 fn build_cv(dir: &Path, yaml: &str) -> Vec<u8> {
     fs::write(dir.join("cv.yaml"), yaml).expect("write yaml");
     let output = Command::new(env!("CARGO_BIN_EXE_cv"))
-        .arg("build")
+        // `--no-fit` keeps the measurements at the designed rhythm: the fit
+        // loop may grow a page this short (ADR-0053), and absolute pt
+        // distances must not depend on where its search lands.
+        .args(["build", "--no-fit"])
         .current_dir(dir)
         .output()
         .expect("cv binary runs");
