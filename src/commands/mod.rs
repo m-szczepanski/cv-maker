@@ -114,14 +114,35 @@ pub fn report_warnings(warnings: &[Diag]) {
     }
 }
 
-/// The fit-overflow warning at the floor (spec §7 step 4, ADR-0026): plain text —
-/// the cause is content volume, not one YAML value, so there is no span to label.
-/// The spill is measured against the target page count (`design.pages`).
+/// The fit-overflow warning when the target page count is unreachable
+/// (spec §7 step 4, ADR-0026 + ADR-0052): plain text — the cause is content
+/// volume, not one YAML value, so there is no span to label. The loop has
+/// auto-fitted to the smallest reachable page count with the gentlest probed
+/// setting; the spill and both levers (keep the placement, or cut) are named.
 pub fn report_overflow(output: &crate::render::RenderOutput, target_pages: usize) {
     let message = format!(
-        "content still overflows at the fit floor: about {} lines spill onto {} extra page(s); cut content (e.g. bullets or paragraphs), raise design.pages, or relax design.fit_floor / margins",
+        "content does not fit {} page(s): auto-fitted to {} page(s) with the gentlest settings that reach this count — about {} lines spill onto {} extra page(s); set design.pages: {} to keep this placement, or cut content (e.g. bullets or paragraphs) to fit",
+        target_pages,
+        output.page_count,
         output.overflow_lines,
         output.page_count.saturating_sub(target_pages),
+        output.page_count,
+    );
+    let is_tty = std::io::stderr().is_terminal();
+    err_text(&crate::error::render_diag(
+        &Diag::plain(message, Severity::Warning),
+        is_tty,
+    ));
+}
+
+/// The underfill warning when the exact target page count could not be reached
+/// by stretching (ADR-0052): the content is too short to span the configured
+/// pages, or the stretch jumped over the count. Same plain-text rules as the
+/// overflow warning (ADR-0026: a result, not an error — exit stays 0).
+pub fn report_underfilled(output: &crate::render::RenderOutput, target_pages: usize) {
+    let message = format!(
+        "content is too short for {} page(s): the pages hold at {} page(s) even fully stretched — set design.pages: {} to keep this layout, or add content to span {}",
+        target_pages, output.page_count, output.page_count, target_pages,
     );
     let is_tty = std::io::stderr().is_terminal();
     err_text(&crate::error::render_diag(

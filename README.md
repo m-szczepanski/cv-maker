@@ -195,34 +195,34 @@ Global:
 
 ## Fitting to your page count
 
-One page is the default, and it is a target, not a ceiling you work around: when the
-first render is too long, `cv` tightens spacing and margins first, then reduces type
-size, and stops at the first setting that fits — so your CV uses the largest, roomiest
-layout it can. If you want a longer CV, set the target and the same loop works toward
-it, only tightening when the content exceeds *both* pages:
+One page is the default, and the count you set is the count you get: when the first
+render is too long, `cv` tightens spacing and margins first, then reduces type size —
+and always keeps the *roomiest* setting that reaches your count, so a setting is only
+sacrificed when it actually changes the page count. If you want a longer CV, set the
+target and the same contract works both ways:
 
 ```yaml
 design:
-  pages: 2                # the page count to fit into; default 1
+  pages: 2                # the exact page count to fit; default 1
 ```
 
-A two-page target is a promise the pages get *used*, not just allowed for: when the
-content already fits, `cv` grows the layout instead of leaving page 2 with two lines on
-it — spacing first, then type size, then margins, each only as far as it can go while
-the document still fits (so a sparse CV grows into two full pages rather than
-stranding a fragment). A section that fits on one page is never split across two:
-it moves whole to the next page. You can see what the loop did in the last line of
-`cv build`:
+The target is a promise the pages are *used*, not just allowed for: when the content
+already fits with room to spare, `cv` grows the layout instead of leaving page 2 with
+two lines on it — spacing first, then type size, then margins, and if the caps of that
+normal growth still do not span your count, one last search stretches the rhythm
+further, only as far as needed to land on the page count exactly. A section that fits
+on one page is never split across two: it moves whole to the next page. You can see
+what the loop did in the last line of `cv build`:
 
 ```
 cv.pdf  1 page  fit: scale 1.00  (218 ms)                             # already fit
 cv.pdf  1 page  fit: scale 1.00 spacing 0.70 margins 0.88  (262 ms)   # tightened spacing to fit
-cv.pdf  1 page  fit: scale 0.89 spacing 0.60 margins 0.83  (271 ms)   # ...and type too, at the floors
 cv.pdf  2 pages  fit: scale 1.00  (231 ms)                            # fills its 2-page target as written
 cv.pdf  2 pages  fit: scale 1.22 spacing 3.00 margins 1.00  (240 ms)  # grew to fill its 2-page target
+cv.pdf  2 pages  fit: scale 1.25 spacing 4.41 margins 1.40  (240 ms)  # ...stretched past the caps to land on 2
 ```
 
-You control how far it may go:
+You control how far the shrinking may go:
 
 ```yaml
 design:
@@ -232,14 +232,17 @@ design:
     min_scale: 0.85      # never smaller than 85% of the sizes you set
 ```
 
-If even the smallest allowed layout does not fit, you still get the PDF, plus a warning
-saying how much spilled past your `pages` target and what to change — and `cv` still
-exits 0, because you asked for a document and got one:
+Sometimes the count is simply out of reach — too much content to shrink, or too little
+to stretch. You still get the PDF and a clear warning naming the count that *is*
+reachable, and `cv` still exits 0, because you asked for a document and got one:
 
 ```
-⚠ content still overflows at the fit floor: about 14 lines spill onto 1 extra page(s);
-  cut content (e.g. bullets or paragraphs), raise design.pages, or relax
-  design.fit_floor / margins
+⚠ content does not fit 2 page(s): auto-fitted to 3 page(s) with the gentlest settings
+  that reach this count — about 43 lines spill onto 1 extra page(s); set design.pages: 3
+  to keep this placement, or cut content (e.g. bullets or paragraphs) to fit
+
+⚠ content is too short for 2 page(s): the pages hold at 1 page(s) even fully stretched
+  — set design.pages: 1 to keep this layout, or add content to span 2
 ```
 
 ---

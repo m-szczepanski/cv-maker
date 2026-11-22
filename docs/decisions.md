@@ -1064,6 +1064,46 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   fails against the pre-fix template — and that raising the design `entry_gap` still
   widens the separation proportionally.
 
+## ADR-0052 — `design.pages` is an exact contract: gentle overflow landings, stretch to fill
+
+- **Context:** The owner's real CV hit both failure shapes of the target-as-maximum loop. With
+  the default one-page target, content that overflows even at the fit floors rendered the floors
+  compile: spacing squeezed to 0.6, fonts to the floor, typography damaged — and STILL two pages,
+  with the GDPR footer pinned at the bottom of page 2 above a large hole (the owner: "the
+  experience section is really crowded and in the same time we have a huge empty space between
+  education and gdpr"). Compression past the point where the page count stops falling buys no
+  page. The mirror shape: a configured `pages: 2` could deliver a one-page file whenever the
+  fill caps were reached without spanning the target, violating the page contract (the owner:
+  "if user sets 2 pages in config we HAVE to produce two page file").
+- **Decision:** `design.pages: N` means EXACTLY N, both directions, whenever reachable:
+  1. Unreachable from above (floors still overflow): the loop records every probe
+     (`Session::history`) and delivers the **least aggressive probed compile among those reaching
+     the smallest page count it saw** (ordering: font, then spacing, then margin), warning about
+     the auto-fitted count and the spill measured against the target. The identity itself is a
+     legitimate pick when no compression moved the count.
+  2. Unreachable from below (pages under N): the fill phase — previously skipped for a landing
+     that merely fits — now chains after ANY landing under the target (`settle`), and when the
+     ordinary caps (spacing 3.0, font 1.25, margin 1.4, kept as taste limits for normal growth)
+     still leave the count short, a final bounded bisection grows `spacing_scale` past them to
+     the gentlest stretch that reaches N, under a hard ceiling of 12×.
+  3. Neither direction can fabricate the count (content far too long, or a stretch jumping over
+     N because kept-whole sections move pages together): the honest compile ships with a
+     warning naming the reachable count (`too short …` / `auto-fitted to …`); exit stays 0
+     (ADR-0026 unchanged).
+  Readability floors are never crossed; only growth past taste caps is possible, and only as
+  far as reaching the count requires. The searches are the same bounded bisections, so the
+  result stays deterministic; compile bounds become 13 tighten (fallback is free — it picks
+  from history), 25 fill-with-stretch, 36 when a below-target tighten landing chains both.
+- **Consequences:** The warning texts change (both carry the landed/reachable count and suggest
+  `design.pages` — the integration tests' pinned substrings moved with them). `grow_to_cap`
+  takes a per-stage lower bound so chained fills grow from the landing instead of 1.0.
+  `RenderOutput` derives `Clone` for the probe history (tens of KB per compile, ≤36 compiles).
+  Sparse content can now ship as a two-page CV with very wide gaps — that is the contract the
+  owner asked for; the alternative (a short one-page file for a `pages: 2` config) was rejected.
+  The 12× stretch ceiling is a reviewable constant. The ADR-0044 "one-page targets never fill"
+  rule is untouched. Spec §7 (goals bullets, step 4, fill paragraph, hard bounds) rewritten in
+  the same change.
+
 ## Open questions (spec §14) — status
 
 All closed as of M6; each carries the ADR that resolved it.

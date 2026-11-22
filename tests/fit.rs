@@ -224,7 +224,7 @@ fn no_fit_flag_skips_the_loop() {
         "disabled loop must write through the overflow, got: {out}"
     );
     assert!(
-        !out.contains("content still overflows"),
+        !out.contains("auto-fitted to"),
         "no floor warning when the user opted out, got: {out}"
     );
     let pages = pdf_extract::extract_text_by_pages(dir.join("cv.pdf")).expect("text");
@@ -245,7 +245,7 @@ fn design_fit_one_page_false_skips_the_loop() {
         out.contains("2 pages") && out.contains("fit: scale 1.00"),
         "design-level opt-out must skip shrinking, got: {out}"
     );
-    assert!(!out.contains("content still overflows"), "got: {out}");
+    assert!(!out.contains("auto-fitted to"), "got: {out}");
 }
 
 /// Plan 4.3 / ADR-0026: impossible content still writes the PDF and exits 0,
@@ -267,16 +267,17 @@ fn impossible_content_still_builds_with_a_warning_and_exit_zero() {
         "A(5+1) + B(5+1) + identity is the hard bound (ADR-0024), got: {out}"
     );
     assert!(
-        out.contains("content still overflows at the fit floor"),
+        out.contains("auto-fitted to"),
         "the warning must be printed, got: {out}"
     );
     assert!(
-        out.contains("spill onto") && out.contains("relax design.fit_floor"),
+        out.contains("spill onto") && out.contains("design.pages"),
         "the warning must quantify the spill and suggest a fix, got: {out}"
     );
     assert!(
-        out.contains("fit: scale 0.89 spacing 0.60 margins 0.83"),
-        "the line must report the exact floors for the default design, got: {out}"
+        out.contains("fit: scale 0.90 spacing 0.60 margins 0.83"),
+        "the line must report the gentlest compile reaching the smallest page count \
+         (floors on spacing/margins, the largest still-two-pages font), got: {out}"
     );
 
     let pages = pdf_extract::extract_text_by_pages(dir.join("cv.pdf")).expect("text");
@@ -299,7 +300,7 @@ fn two_page_target_does_not_shrink_content_that_fits_two_pages() {
         !out.contains("scale 0.") && !out.contains("spacing 0.") && !out.contains("margins 0."),
         "a CV within its 2-page target must not be shrunk, got: {out}"
     );
-    assert!(!out.contains("content still overflows"), "got: {out}");
+    assert!(!out.contains("auto-fitted to"), "got: {out}");
     let pages = pdf_extract::extract_text_by_pages(dir.join("cv.pdf")).expect("text");
     assert_eq!(pages.len(), 2, "got: {out}");
 }
@@ -319,11 +320,11 @@ fn overflow_warning_counts_pages_past_the_target() {
         "overflow must not fail the build (ADR-0026), got: {out}"
     );
     assert!(
-        out.contains("content still overflows at the fit floor"),
+        out.contains("auto-fitted to"),
         "the warning must be printed, got: {out}"
     );
     assert!(
-        out.contains("raise design.pages"),
+        out.contains("design.pages:"),
         "the warning must suggest raising design.pages, got: {out}"
     );
 
@@ -358,7 +359,58 @@ fn a_sparse_two_page_cv_is_filled_by_grown_scales() {
         "page 2 must be substantially filled, got: {:?}",
         pages[1]
     );
-    assert!(!out.contains("content still overflows"), "got: {out}");
+    assert!(!out.contains("auto-fitted to"), "got: {out}");
+}
+
+/// ADR-0052: the page count is an exact contract. Content that stays one page
+/// even at the fill caps is stretched further — to the gentlest spacing past
+/// them that lands exactly on the target — instead of shipping a short one.
+#[test]
+fn a_two_page_target_stretches_past_the_fill_caps_to_land_exactly_on_two_pages() {
+    let dir = unique_dir("fit-stretch-two");
+    let yaml = cv_yaml(4, 1) + "design:\n  pages: 2\n";
+    fs::write(dir.join("cv.yaml"), yaml).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
+    assert!(ok, "got: {out}");
+    assert!(
+        out.contains("2 pages"),
+        "the target page count is delivered exactly, got: {out}"
+    );
+    assert!(
+        out.contains("fit: scale 1.25 spacing 9.47 margins 1.40"),
+        "the gentlest stretching bisection lands the two-page landing, got: {out}"
+    );
+    assert!(
+        !out.contains("too short") && !out.contains("auto-fitted to"),
+        "an exact landing warns about nothing, got: {out}"
+    );
+}
+
+/// ADR-0052: content so short that no stretch spans the target is reported,
+/// not silently shipped under-filled or over-stretched past the ceiling.
+#[test]
+fn content_too_short_for_the_target_warns_instead_of_faking_pages() {
+    let dir = unique_dir("fit-underfill");
+    let yaml = cv_yaml(3, 1) + "design:\n  pages: 2\n";
+    fs::write(dir.join("cv.yaml"), yaml).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
+    assert!(ok, "underfill must not fail the build, got: {out}");
+    assert!(
+        out.contains("content is too short for 2 page(s)"),
+        "the warning must name the unreachable target, got: {out}"
+    );
+    assert!(
+        out.contains("design.pages: 1"),
+        "the warning must offer the reachable count, got: {out}"
+    );
+    let pages = pdf_extract::extract_text_by_pages(dir.join("cv.pdf")).expect("text");
+    assert_eq!(
+        pages.len(),
+        1,
+        "the honest one-page PDF is written, got: {out}"
+    );
 }
 
 /// ADR-0045: `cv.gdpr` renders on the last page — the only page for a one-page
@@ -443,7 +495,7 @@ fn the_gdpr_clause_tips_the_fit_into_tightening() {
         "the clause alone must tip the loop into tightening spacing and margins, got: {out}"
     );
     assert!(
-        !out.contains("content still overflows"),
+        !out.contains("auto-fitted to"),
         "one page is kept, got: {out}"
     );
     let pages = pdf_extract::extract_text_by_pages(dir.join("clause.pdf")).expect("text");
@@ -521,7 +573,7 @@ fn quiet_still_prints_the_overflow_warning() {
     let (ok, out) = run_cv(&dir, &["--quiet", "build", "--output", "cv.pdf"]);
     assert!(ok, "got: {out}");
     assert!(
-        out.contains("content still overflows at the fit floor"),
+        out.contains("auto-fitted to"),
         "warning survives --quiet, got: {out}"
     );
     assert!(

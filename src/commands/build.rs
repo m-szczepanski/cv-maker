@@ -58,6 +58,11 @@ pub fn run(args: &BuildArgs, cli: &Cli) -> Result<()> {
         // code stays 0 — overflow is a result, not an error.
         super::report_overflow(&output, config.target_pages);
     }
+    if outcome.underfilled {
+        // ADR-0052: the exact target could not be reached from below; same
+        // essential-warning rules as the overflow case.
+        super::report_underfilled(&output, config.target_pages);
+    }
 
     if !cli.quiet {
         let ms = started.elapsed().as_millis();

@@ -26,8 +26,13 @@ cv build             # reads cv.yaml, writes cv.pdf in the same directory
 - Single static binary with templates and fonts embedded. Nothing else to install.
 - Per-CV design configuration (fonts, sizes, margins, colors) in a separate `design` section of the same file.
 - Template support: built-in templates plus user-supplied ones.
-- Guaranteed fit within the target page count (auto-fit; one page by default, configurable with `design.pages`) with clear warnings when impossible.
-- Guaranteed fill: when content fits the target with room to spare, the loop grows the layout so the pages are used, and a section that fits one page is never split across two (ADR-0044, ADR-0046).
+- Guaranteed exact page count (auto-fit; one page by default, configurable with `design.pages`):
+  the loop delivers exactly `design.pages` pages whenever any setting within the floors and the
+  bounded stretch reaches that count, with clear warnings when it cannot (ADR-0052).
+- Guaranteed fill: when content fits the target with room to spare, the loop grows the layout
+  until the document spans exactly `design.pages` pages — past the ordinary growth caps if
+  needed — and a section that fits one page is never split across two (ADR-0044, ADR-0046,
+  ADR-0052).
 - Great error messages: line-numbered, actionable.
 - Real selectable text in PDFs, correct reading order, ATS-friendly.
 - Deterministic: the same YAML and the same tool version produce the same PDF on every machine.
@@ -308,21 +313,34 @@ than `design.pages` pages (default 1):
 1. Tighten spacing in steps: `spacing.*` and margins down to a minimum (defaults: spacing scale 0.6, margins not below 1.0 cm).
 2. Then scale font sizes down in small steps (for example 0.02 per step) until it fits or the floor is reached (`fit_floor.min_body_size` or `min_scale`, whichever is stricter).
 3. Pick the **least aggressive** setting that fits. Prefer a binary search over a linear walk to limit compile count.
-4. If the content still does not fit at the floor: write the PDF anyway, exit code 0 or a distinct documented exit code (decide and document), and print a clear warning stating how many lines overflow — measured against the `design.pages` target — and suggesting what to change (cut content, raise `design.pages`, or relax `fit_floor` / margins).
+4. If the content does not fit even at the floors: the smallest page count the loop has seen is
+   reachable, nothing smaller is. Deliver the **least aggressive probed compile that reaches it**
+   — which may be the identity itself; compressing past the point where the page count stops
+   falling buys no page and only damages typography. Write the PDF, exit 0, and print a clear
+   warning naming the page count it auto-fitted to, how many lines overflow — measured against
+   the `design.pages` target — and what to change (cut content, or set `design.pages` to the
+   reached count) (ADR-0052).
 
-When the first compile already fits and the target is more than one page, the loop
-instead **fills** (ADR-0044): content spread thinly over the target's pages looks
-broken, so the loop grows — in bounded searches, each entered only when the previous
-one ended at its cap with the document still fitting — `spacing_scale`, then
-`font_scale`, then `margin_scale`, each to the largest value whose compile still fits
-within the target. The caps (spacing 3.0, font 1.25, margins 1.4) are sanity limits:
-content far below the target cannot fill it gracefully at any setting. A one-page
-target never fills: its layout stays the top-flow identity.
+When a compile lands **under** the target page count — the first compile already fits with room
+to spare, or tightening overshot — the loop grows toward exactly `design.pages` (ADR-0044,
+ADR-0052): content spread thinly over fewer pages than configured is a broken layout and a
+silently violated page contract. Growth happens in bounded searches, each stage entered only
+when the previous one ended at its cap with the document still fitting within the target —
+`spacing_scale`, then `font_scale`, then `margin_scale`, each to the largest value whose compile
+still fits. If the capped growth still leaves the pages short of the target, a final bounded
+search grows `spacing_scale` past its cap — to the gentlest stretch reaching the target, with a
+hard ceiling at 12× the designed rhythm. A stretch that jumps over the target (kept-whole
+sections moving several pages at once) or a ceiling that still cannot span it ships the last
+under-target compile with a clear warning naming the reachable count (ADR-0052). The ordinary
+caps (spacing 3.0, font 1.25, margins 1.4) are preferences for normal growth, not a stretch
+limit. A one-page target never fills: its layout stays the top-flow identity.
 
 Hard requirements:
 
-- The loop must have a maximum iteration count. No unbounded loops. Worst case:
-  13 compiles on the tighten path, 19 on the fill path (the two are mutually exclusive).
+- The loop must have a maximum iteration count. No unbounded loops. Worst case: 13 compiles on
+  the tighten path (the overflow fallback adds none — it picks from the probe history), 25 on
+  the fill path, and 36 when a tighten landing under the target chains the fill and stretch
+  searches after it.
 - Never go below the floor.
 - Never shrink if the first compile already fits within `design.pages`.
 - The result is deterministic.
