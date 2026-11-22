@@ -296,7 +296,9 @@ All built-ins follow two page-layout rules (ADR-0046, ADR-0045):
   heading is `sticky` so it never strands at a page bottom.
 - **`cv.gdpr` renders at the bottom of the last page**: stretchable space (`v(1fr)`)
   above the statement pins it to the bottom margin — the last page of a multi-page
-  CV, the only page of a one-page CV.
+  CV, the only page of a one-page CV. A minimum gap of 2× the section spacing sits
+  under the stretchable space, so on a full page the statement reads as a footer,
+  not as the previous section's tail (ADR-0054).
 
 ### Custom templates
 

@@ -269,9 +269,12 @@
 
 // GDPR consent statement (ADR-0045): the user's own legal wording, always literal
 // text, pinned to the bottom of the last page by the stretchable space above it.
+// The minimum gap is 2× section spacing — a fixed em slack collapsed to near a
+// normal section break on a full page and made the statement read as the previous
+// section's tail; the stretch space stays untouched.
 // The grid keeps it aligned with the main column, clear of the rail tint.
 #if cv.gdpr != none [
-  #v(0.9em)
+  #v(section-gap * 2)
   #v(1fr)
   #grid(
     columns: (rail-width, 1fr),
