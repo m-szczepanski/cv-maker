@@ -26,6 +26,7 @@ expression: schema
           "min_scale": 0.85
         },
         "fit_one_page": true,
+        "fit_stretch_max": 12.0,
         "font_paths": [],
         "fonts": {
           "body": "Inter",
@@ -241,6 +242,12 @@ expression: schema
           "description": "Enable the one-page fitting loop (spec §7).",
           "type": "boolean",
           "default": true
+        },
+        "fit_stretch_max": {
+          "description": "Ceiling for the spacing scale of the exact-page-count stretch (spec §7,\nADR-0052). The fit loop clamps it between the ordinary fill cap (3.0)\nand the sanity ceiling [`crate::fit::FILL_EXTENDED_MAX_SPACING`];\nnon-finite values degrade to the ceiling default.",
+          "type": "number",
+          "format": "double",
+          "default": 12.0
         },
         "font_paths": {
           "description": "Extra directories with .ttf/.otf files, relative to the YAML file.",

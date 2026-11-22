@@ -86,6 +86,7 @@ design:
     text: "#111111"
     muted: "#555555"
   fit_one_page: true
+  fit_stretch_max: 12.0    # ceiling of the exact-page-count spacing stretch
   fit_floor:
     min_body_size: 8.5pt
     min_scale: 0.85

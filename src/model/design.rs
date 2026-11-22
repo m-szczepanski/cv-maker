@@ -31,6 +31,12 @@ pub struct Design {
     /// Enable the one-page fitting loop (spec §7).
     pub fit_one_page: bool,
 
+    /// Ceiling for the spacing scale of the exact-page-count stretch (spec §7,
+    /// ADR-0052). The fit loop clamps it between the ordinary fill cap (3.0)
+    /// and the sanity ceiling [`crate::fit::FILL_EXTENDED_MAX_SPACING`];
+    /// non-finite values degrade to the ceiling default.
+    pub fit_stretch_max: f64,
+
     pub fit_floor: FitFloor,
 
     /// Extra directories with .ttf/.otf files, relative to the YAML file.
@@ -49,6 +55,7 @@ impl Default for Design {
             spacing: Spacing::default(),
             colors: Colors::default(),
             fit_one_page: true,
+            fit_stretch_max: crate::fit::FILL_EXTENDED_MAX_SPACING,
             fit_floor: FitFloor::default(),
             font_paths: Vec::new(),
         }

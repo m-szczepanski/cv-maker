@@ -200,6 +200,7 @@ design:
     text: "#111111"
     muted: "#555555"
   fit_one_page: true
+  fit_stretch_max: 12.0    # ceiling of the exact-page-count spacing stretch
   fit_floor:
     min_body_size: 8.5pt
     min_scale: 0.85
@@ -328,8 +329,9 @@ silently violated page contract. Growth happens in bounded searches, each stage 
 when the previous one ended at its cap with the document still fitting within the target —
 `spacing_scale`, then `font_scale`, then `margin_scale`, each to the largest value whose compile
 still fits. If the capped growth still leaves the pages short of the target, a final bounded
-search grows `spacing_scale` past its cap — to the gentlest stretch reaching the target, with a
-hard ceiling at 12× the designed rhythm. A stretch that jumps over the target (kept-whole
+search grows `spacing_scale` past its cap — to the gentlest stretch reaching the target, under
+a ceiling set by `design.fit_stretch_max` (default 12× the designed rhythm, clamped to at least
+the ordinary spacing cap and at most that 12× sanity bound). A stretch that jumps over the target (kept-whole
 sections moving several pages at once) or a ceiling that still cannot span it ships the last
 under-target compile with a clear warning naming the reachable count (ADR-0052). The ordinary
 caps (spacing 3.0, font 1.25, margins 1.4) are preferences for normal growth, not a stretch

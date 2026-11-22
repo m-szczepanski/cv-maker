@@ -1,10 +1,13 @@
 //! Spacing-rhythm regression tests for the `compact` template's entries. Typst
 //! collapses the spacing of adjacent blocks to its maximum, so a bare `entry_gap`
 //! between entry blocks separated Experience entries by barely more than a line pitch
-//! — entries blended into their own bullet lists. The template doubles the block
-//! spacing (`between-entries`). These tests read span baselines from the PDF content
-//! stream and pin the visible rhythm: the distance between entries must exceed the
-//! bullet pitch by a full design `entry_gap`, and must grow with the design value.
+//! — entries blended into their own bullet lists, and the global paragraph spacing
+//! floated each entry's heading, midline and bullets apart from one another. The
+//! template doubles the block spacing (`between-entries`) and tightens spacing inside
+//! an entry. These tests read span baselines from the PDF content stream and pin the
+//! visible rhythm: the distance between entries must exceed BOTH the bullet pitch and
+//! the heading→midline distance by a full design `entry_gap`, and must grow with the
+//! design value.
 
 use flate2::read::ZlibDecoder;
 use std::fs;

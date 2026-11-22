@@ -413,6 +413,27 @@ fn content_too_short_for_the_target_warns_instead_of_faking_pages() {
     );
 }
 
+/// ADR-0052: `design.fit_stretch_max` narrows the stretch search — content
+/// that would only reach the target by stretching past the knob is reported
+/// `too short` instead, with the caps kept as the gentlest probed setting.
+#[test]
+fn a_lower_fit_stretch_max_warns_instead_of_stretching_that_far() {
+    let dir = unique_dir("fit-stretch-cap");
+    let yaml = cv_yaml(4, 1) + "design:\n  pages: 2\n  fit_stretch_max: 6.0\n";
+    fs::write(dir.join("cv.yaml"), yaml).expect("write yaml");
+
+    let (ok, out) = run_cv(&dir, &["build", "--output", "cv.pdf"]);
+    assert!(ok, "got: {out}");
+    assert!(
+        out.contains("content is too short for 2 page(s)"),
+        "the ceiling stops the stretch at 6x and warns, got: {out}"
+    );
+    assert!(
+        out.contains("fit: scale 1.25 spacing 3.00 margins 1.40"),
+        "the caps stay — nothing past them was reachable within the knob, got: {out}"
+    );
+}
+
 /// ADR-0045: `cv.gdpr` renders on the last page — the only page for a one-page
 /// CV, the target page for a multi-page CV. (The bottom pinning itself is
 /// asserted against real layout in `src/render`.)

@@ -222,14 +222,15 @@ cv.pdf  2 pages  fit: scale 1.22 spacing 3.00 margins 1.00  (240 ms)  # grew to 
 cv.pdf  2 pages  fit: scale 1.25 spacing 4.41 margins 1.40  (240 ms)  # ...stretched past the caps to land on 2
 ```
 
-You control how far the shrinking may go:
+You control how far the loop may go, in both directions:
 
 ```yaml
 design:
-  fit_one_page: true     # false, or `--no-fit`, turns the loop off
+  fit_one_page: true      # false, or `--no-fit`, turns the loop off
+  fit_stretch_max: 12.0   # the exact-count stretch never passes this spacing scale
   fit_floor:
-    min_body_size: 8.5pt # never smaller body text than this
-    min_scale: 0.85      # never smaller than 85% of the sizes you set
+    min_body_size: 8.5pt  # never smaller body text than this
+    min_scale: 0.85       # never smaller than 85% of the sizes you set
 ```
 
 Sometimes the count is simply out of reach — too much content to shrink, or too little

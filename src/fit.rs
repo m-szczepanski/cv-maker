@@ -10,33 +10,34 @@
 //! 3. Phase B — only if A's floors still overflow: shrink `font_scale` toward its
 //!    floor (`fit_floor.min_scale` and `min_body_size / sizes.body`, whichever is
 //!    stricter, i.e. the higher lower bound) at `t = 1`.
-//! 4. Phase F (fill, ADR-0044) — only when the identity compile already fits
-//!    and the target is more than one page: grow the scales that make the
-//!    pages fuller, one bounded search at a time, each entered only when the
-//!    previous one ended at its cap with the document still fitting —
-//!    `spacing_scale` (the vertical rhythm stretches), then `font_scale`
-//!    (text and leading grow), then `margin_scale` (the text area shrinks so
-//!    the same content fills it deeper, typography untouched). The caps
-//!    ([`FILL_MAX_SCALE`], [`FILL_MAX_FONT_SCALE`], [`FILL_MAX_MARGIN_SCALE`])
-//!    are sanity limits, not fill guarantees: content far below the target
-//!    cannot fill it gracefully at any setting.
-//! 5. If neither path reaches the target — the floors still overflow (spec §7
-//!    step 4, ADR-0052) — the loop does not render the floors: it adopts the
-//!    **least aggressive compile it already probed** among those reaching the
-//!    **smallest page count it saw** (the identity itself if nothing moved
-//!    the page count). Compression that buys no page is pure damage, and the
-//!    choice costs no extra compiles: every candidate is in the probe
-//!    history. The run is still reported as overflowed (the target was not
-//!    met) with the warning naming the page count it landed on.
-//! 6. The target page count is EXACT (ADR-0052): landing under it stretches
-//!    the document instead — the fill phase grows the scales until the pages
-//!    are reached, and when the sanity caps still leave fewer pages, one
-//!    final bounded search grows `spacing_scale` beyond the caps to the
-//!    gentlest stretch that lands exactly on the target (a hard ceiling at
-//!    [`FILL_EXTENDED_MAX_SPACING`]). A stretch that jumps over the target
-//!    (kept-whole sections move several pages at once) or cannot reach it at
-//!    all is reported `underfilled` — never a silently wrong page count.
-//! 6. The searches are bounded bisections probing deterministic midpoints
+//! 4. Phase F (fill, ADR-0044) — entered whenever a compile fits within a
+//!    multi-page target (the identity or a tightened landing): the loop grows
+//!    the rhythm while the document stays within the count, and ADR-0052
+//!    extends that phase to reach the count exactly. Growth happens one
+//!    bounded search at a time, each entered only when the previous one
+//!    ended at its cap with the document still fitting — `spacing_scale`
+//!    (the vertical rhythm stretches), then `font_scale` (text and leading
+//!    grow), then `margin_scale` (the text area shrinks so the same content
+//!    fills it deeper, typography untouched) — each to the largest value
+//!    that still fits, up to the ordinary caps ([`FILL_MAX_SCALE`],
+//!    [`FILL_MAX_FONT_SCALE`], [`FILL_MAX_MARGIN_SCALE`]).
+//! 5. Exact-count stretch (ADR-0052) — when the capped growth still leaves
+//!    fewer pages than the target, one final bounded search grows
+//!    `spacing_scale` past the caps to the gentlest stretch that reaches the
+//!    count, under a ceiling set by `design.fit_stretch_max` (default
+//!    [`FILL_EXTENDED_MAX_SPACING`], never below the ordinary caps). A
+//!    stretch that jumps over the target (kept-whole sections move several
+//!    pages at once) or a ceiling that cannot reach it is reported
+//!    `underfilled` — never a silently wrong page count.
+//! 6. If the floors still overflow the target (spec §7 step 4, ADR-0052),
+//!    the loop does not render the floors: it adopts the **least aggressive
+//!    compile it already probed** among those reaching the **smallest page
+//!    count it saw** (the identity itself if nothing moved the page count).
+//!    Compression that buys no page is pure damage, and the choice costs no
+//!    extra compiles: every candidate is in the probe history. The run is
+//!    still reported as overflowed (the target was not met) with the warning
+//!    naming the page count it landed on.
+//! 7. The searches are bounded bisections probing deterministic midpoints
 //!    (`MAX_PHASE_PROBES` each, plus one explicit boundary probe), so they
 //!    terminate by construction, never cross a floor, and return the least
 //!    aggressive *grid point* that fits (monotonicity of "shrinks more ⇒ fits"
@@ -61,11 +62,11 @@ pub const MARGIN_FLOOR_PT: f64 = 72.0 / 2.54;
 
 /// Interior bisection probes per phase. 5 probes resolve the phase range to
 /// 1/32 ≈ 3.1 % (font scale: ≤ 0.5 % of its range, finer than the spec's 0.02
-/// example step). Worst-case compile count: `1 + 2 * (5 + 1) = 13` on the
-/// tighten path (the overflow fallback itself adds none — it picks from the
-/// probe history), and `1 + 3 * (5 + 1) + (5 + 1) = 25` on the fill path when
-/// the exact-target stretch is searched (the paths chain only through the
-/// fill: a landing under the target grows, an overflow never does).
+/// example step). Worst-case compile count (spec §7): 13 on a run that only
+/// tightens (the overflow fallback adds none — it picks from the probe
+/// history), 25 on a run that only fills (19 plus the ceiling probe and the
+/// stretch bisection), and 36 when a tightened landing under the target
+/// chains the fill and stretch searches after it.
 pub const MAX_PHASE_PROBES: usize = 5;
 
 /// Fill-phase caps (ADR-0044): ordinary growth stops here even if the pages
@@ -78,8 +79,9 @@ pub const FILL_MAX_FONT_SCALE: f64 = 1.25;
 pub const FILL_MAX_MARGIN_SCALE: f64 = 1.4;
 
 /// Hard ceiling of the exact-target stretch (ADR-0052): twelve times the
-/// designed rhythm. Content sparser than that cannot span the target page
-/// count at any acceptable setting, and the run reports `underfilled`.
+/// designed rhythm, and the default of `design.fit_stretch_max`. Content
+/// sparser than that cannot span the target page count at any acceptable
+/// setting, and the run reports `underfilled`.
 pub const FILL_EXTENDED_MAX_SPACING: f64 = 12.0;
 
 /// Everything the loop needs from the (resolved) design block, precomputed.
@@ -93,6 +95,9 @@ pub struct FitConfig {
     pub margin_min_scale: f64,
     /// Smallest `font_scale` Phase B may use.
     pub font_floor: f64,
+    /// Largest `spacing_scale` the exact-target stretch may use (ADR-0052),
+    /// clamped into `[FILL_MAX_SCALE, FILL_EXTENDED_MAX_SPACING]`.
+    pub max_stretch_spacing: f64,
 }
 
 impl FitConfig {
@@ -103,6 +108,7 @@ impl FitConfig {
             target_pages: design.pages.get() as usize,
             margin_min_scale: margin_min_scale(&design.margins),
             font_floor: font_floor_scale(design),
+            max_stretch_spacing: stretch_ceiling(design),
         }
     }
 }
@@ -112,9 +118,11 @@ impl FitConfig {
 pub struct FitOutcome {
     pub output: RenderOutput,
     pub applied: FitParams,
-    /// Compiles performed — bounded by `1 + 2 * (MAX_PHASE_PROBES + 1)` on the
-    /// tighten path and `1 + 3 * (MAX_PHASE_PROBES + 1) + (MAX_PHASE_PROBES + 1)`
-    /// when a fill stretch beyond the caps is searched (ADR-0052).
+    /// Compiles performed — bounded by `1 + 2 * (MAX_PHASE_PROBES + 1) = 13`
+    /// when only tightening runs, `1 + 3 * (MAX_PHASE_PROBES + 1) +
+    /// (MAX_PHASE_PROBES + 1) = 25` when only the fill and its stretch run,
+    /// and 36 when a tightened landing under the target chains them
+    /// (spec §7 hard bound).
     pub compiles: usize,
     /// Content still overflowed at every floor (spec §7 step 4; exit stays 0,
     /// ADR-0026). The delivered PDF has MORE pages than the target.
@@ -155,6 +163,20 @@ fn font_floor_scale(design: &Design) -> f64 {
     size_floor.max(design.fit_floor.min_scale.clamp(0.0, 1.0))
 }
 
+/// Stretch ceiling (ADR-0052): `design.fit_stretch_max` clamped into
+/// `[FILL_MAX_SCALE, FILL_EXTENDED_MAX_SPACING]` — it can lower the search
+/// range below the default but never disable the ordinary fill stages or
+/// raise the sanity ceiling; a non-finite value degrades to the default,
+/// mirroring how [`font_floor_scale`] contains a nonsense `min_scale`.
+fn stretch_ceiling(design: &Design) -> f64 {
+    let requested = design.fit_stretch_max;
+    if requested.is_finite() {
+        requested.clamp(FILL_MAX_SCALE, FILL_EXTENDED_MAX_SPACING)
+    } else {
+        FILL_EXTENDED_MAX_SPACING
+    }
+}
+
 /// Run the fitting loop against a prepared engine (fonts and sources stay loaded;
 /// plan 1.4.4). With `config.enabled == false` this is exactly one identity compile.
 pub fn fit(engine: &Engine, config: &FitConfig) -> std::result::Result<FitOutcome, RenderError> {
@@ -191,7 +213,9 @@ struct Session<'a> {
     compiles: usize,
     /// Every compile of the tighten path, in probe order — the overflow
     /// fallback (ADR-0052) picks the least aggressive among them without
-    /// re-probing, so the spec §7 compile bound holds unchanged.
+    /// re-probing, so the spec §7 compile bound holds unchanged. At the
+    /// worst-case 36 probes with full PDF bytes this holds a few MB, which
+    /// the build process lifetime makes acceptable.
     history: Vec<(FitParams, RenderOutput)>,
 }
 
@@ -446,7 +470,7 @@ impl<'a> Session<'a> {
             spacing_scale: s,
             ..p
         };
-        let (mut a, mut b) = (params.spacing_scale, FILL_EXTENDED_MAX_SPACING);
+        let (mut a, mut b) = (params.spacing_scale, self.config.max_stretch_spacing);
         let at_ceiling = self.call_params(with_spacing(params, b))?;
         if at_ceiling.page_count < target {
             return Ok(self.underfilled(output, params));
@@ -809,6 +833,88 @@ mod tests {
             outcome.compiles,
             1 + 3 * (MAX_PHASE_PROBES + 1) + 1 + MAX_PHASE_PROBES,
             "caps, then the ceiling probe and the bisection"
+        );
+    }
+
+    #[test]
+    fn a_capped_stretch_lands_on_the_gentlest_stretch_the_ceiling_allows() {
+        // `design.fit_stretch_max` = 4.5 with the same shape as the default
+        // ceiling test: the bisection range narrows to (3.0, 4.5] and the
+        // adopted landing tightens from 4.125 to 4.03125 — still exact.
+        let config = FitConfig {
+            target_pages: 2,
+            max_stretch_spacing: 4.5,
+            ..default_config(true)
+        };
+        let outcome = session_growing_with_spacing(
+            &config,
+            |s| if s < 4.0 { 1 } else { 2 },
+            Rc::new(RefCell::new(Vec::new())),
+        )
+        .run()
+        .expect("fake compile never fails");
+        assert!(!outcome.underfilled);
+        assert!(!outcome.overflowed);
+        assert!(
+            (outcome.applied.spacing_scale - 4.03125).abs() < 1e-9,
+            "the ceiling reshapes the grid: {:?}",
+            outcome.applied
+        );
+        assert_eq!(outcome.output.page_count, 2);
+        assert_eq!(
+            outcome.compiles,
+            1 + 3 * (MAX_PHASE_PROBES + 1) + 1 + MAX_PHASE_PROBES
+        );
+    }
+
+    #[test]
+    fn a_ceiling_below_the_reachable_stretch_reports_underfilled_without_bisecting() {
+        // With `fit_stretch_max` = 3.5 the ceiling probe itself stays at one
+        // page: underfilled immediately, and the bisection never runs.
+        let config = FitConfig {
+            target_pages: 2,
+            max_stretch_spacing: 3.5,
+            ..default_config(true)
+        };
+        let outcome = session_growing_with_spacing(
+            &config,
+            |s| if s < 4.0 { 1 } else { 2 },
+            Rc::new(RefCell::new(Vec::new())),
+        )
+        .run()
+        .expect("fake compile never fails");
+        assert!(outcome.underfilled);
+        assert_eq!(
+            outcome.compiles,
+            1 + 3 * (MAX_PHASE_PROBES + 1) + 1,
+            "caps plus the single ceiling probe"
+        );
+        assert_eq!(outcome.applied.spacing_scale, FILL_MAX_SCALE);
+    }
+
+    #[test]
+    fn the_stretch_ceiling_clamps_the_design_knob() {
+        let ceiling = |max: f64| {
+            stretch_ceiling(&design_with(|d| {
+                d.fit_stretch_max = max;
+            }))
+        };
+        assert!((ceiling(5.0) - 5.0).abs() < 1e-12, "in-range values pass");
+        assert!(
+            (ceiling(0.5) - FILL_MAX_SCALE).abs() < 1e-12,
+            "the knob never disables the ordinary fill stages"
+        );
+        assert!(
+            (ceiling(99.0) - FILL_EXTENDED_MAX_SPACING).abs() < 1e-12,
+            "and never raises the sanity ceiling"
+        );
+        assert!(
+            (ceiling(f64::NAN) - FILL_EXTENDED_MAX_SPACING).abs() < 1e-12,
+            "nonsense degrades to the default"
+        );
+        assert!(
+            (stretch_ceiling(&Design::default()) - FILL_EXTENDED_MAX_SPACING).abs() < 1e-12,
+            "the default design uses the documented ceiling"
         );
     }
 
@@ -1337,6 +1443,7 @@ mod tests {
             target_pages: 1,
             margin_min_scale: 0.8,
             font_floor: 1.0,
+            max_stretch_spacing: FILL_EXTENDED_MAX_SPACING,
         };
         let outcome = fake_session(&config, |_| false, probes.clone())
             .run()
@@ -1445,6 +1552,7 @@ mod tests {
             target_pages: 1,
             margin_min_scale: 0.8,
             font_floor: 0.5,
+            max_stretch_spacing: FILL_EXTENDED_MAX_SPACING,
         }
     }
 
@@ -1597,6 +1705,7 @@ mod tests {
             target_pages: 1,
             margin_min_scale: 0.8,
             font_floor: 0.5,
+            max_stretch_spacing: FILL_EXTENDED_MAX_SPACING,
         }
     }
 }

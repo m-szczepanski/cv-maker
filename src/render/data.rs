@@ -160,6 +160,7 @@ pub struct DesignData<'a> {
     pub spacing: SpacingData,
     pub colors: ColorsData,
     pub fit_one_page: bool,
+    pub fit_stretch_max: f64,
     pub fit_floor: FitFloorData,
     pub font_paths: &'a [String],
 }
@@ -196,6 +197,7 @@ impl<'a> From<&'a Design> for DesignData<'a> {
                 muted: d.colors.muted.to_hex(),
             },
             fit_one_page: d.fit_one_page,
+            fit_stretch_max: d.fit_stretch_max,
             fit_floor: FitFloorData {
                 min_body_size: d.fit_floor.min_body_size.to_data(),
                 min_scale: d.fit_floor.min_scale,

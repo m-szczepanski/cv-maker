@@ -1085,7 +1085,9 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
      that merely fits — now chains after ANY landing under the target (`settle`), and when the
      ordinary caps (spacing 3.0, font 1.25, margin 1.4, kept as taste limits for normal growth)
      still leave the count short, a final bounded bisection grows `spacing_scale` past them to
-     the gentlest stretch that reaches N, under a hard ceiling of 12×.
+     the gentlest stretch that reaches N, under a ceiling set by `design.fit_stretch_max`
+     (default 12×, clamped into [3.0, 12.0] so the knob can only narrow the stretch search,
+     never raise the sanity bound or disable ordinary fill).
   3. Neither direction can fabricate the count (content far too long, or a stretch jumping over
      N because kept-whole sections move pages together): the honest compile ships with a
      warning naming the reachable count (`too short …` / `auto-fitted to …`); exit stays 0
@@ -1100,7 +1102,10 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   `RenderOutput` derives `Clone` for the probe history (tens of KB per compile, ≤36 compiles).
   Sparse content can now ship as a two-page CV with very wide gaps — that is the contract the
   owner asked for; the alternative (a short one-page file for a `pages: 2` config) was rejected.
-  The 12× stretch ceiling is a reviewable constant. The ADR-0044 "one-page targets never fill"
+  The stretch ceiling defaults to the reviewable 12× constant and is per-CV configurable via
+  `design.fit_stretch_max` — added after review flagged that exact-count stretching can produce
+  very wide gaps; a lower knob converts unreachable counts into the honest `too short` warning
+  instead of a stretched document. The ADR-0044 "one-page targets never fill"
   rule is untouched. Spec §7 (goals bullets, step 4, fill paragraph, hard bounds) rewritten in
   the same change.
 
