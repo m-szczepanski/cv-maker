@@ -1141,8 +1141,9 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   nothing above the identity fits (a nearly-full page stops there; a half-full
   one chains further; a too-short one pays the cap stages and stops at the
   caps) — build-time-bound M4's "<500 ms typical" applies to the tightening
-  path; filled runs are ~1–3 s in debug builds, accepted
-  for the fill guarantee. Success lines for filled pages show `spacing > 1.00`
+  path; a filled run measures ~3.5–4.5 s end-to-end in debug builds (a
+  single-compile debug build was ~2.5 s), accepted for the fill guarantee.
+  Success lines for filled pages show `spacing > 1.00`
   (README examples extended). Two existing expectations moved with the policy: the
   GDPR-tipping "bare" case now lands on a grown spacing scale, and
   `tests/entry_gaps.rs` measures designed-value rhythm in absolute points, so it
