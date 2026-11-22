@@ -10,10 +10,14 @@
 //! 3. Phase B — only if A's floors still overflow: shrink `font_scale` toward its
 //!    floor (`fit_floor.min_scale` and `min_body_size / sizes.body`, whichever is
 //!    stricter, i.e. the higher lower bound) at `t = 1`.
-//! 4. Phase F (fill, ADR-0044) — entered whenever a compile fits within a
-//!    multi-page target (the identity or a tightened landing): the loop grows
-//!    the rhythm while the document stays within the count, and ADR-0052
-//!    extends that phase to reach the count exactly. Growth happens one
+//! 4. Phase F (fill, ADR-0044, ADR-0053) — entered whenever the first compile
+//!    fits the target (any target: the default one page fills too) or a
+//!    tightened compile lands under it: the loop grows the rhythm while the
+//!    document stays within the count, and ADR-0052 extends that phase to
+//!    reach a multi-page count exactly. A one-page count is never under
+//!    target, so the past-caps stretch of ADR-0052 only ever runs for
+//!    `pages > 1`; a sparse one-page CV grows to the ordinary taste caps and
+//!    keeps the slack it cannot fill gracefully. Growth happens one
 //!    bounded search at a time, each entered only when the previous one
 //!    ended at its cap with the document still fitting — `spacing_scale`
 //!    (the vertical rhythm stretches), then `font_scale` (text and leading
@@ -297,14 +301,12 @@ impl<'a> Session<'a> {
             return Ok(self.outcome(identity, FitParams::default(), false));
         }
         if self.fits(&identity) {
-            // Hard requirement (spec §7): never shrink what already fits. A
-            // multi-page target gets the fill phase even at the right page
-            // count (ADR-0044: grow the rhythm while it stays within target);
-            // ADR-0052 extends that phase to reach the count exactly.
-            if self.config.target_pages > 1 {
-                return self.fill((FitParams::default(), identity));
-            }
-            return Ok(self.outcome(identity, FitParams::default(), false));
+            // Hard requirement (spec §7): never shrink what already fits. Any
+            // fitting first compile gets the fill phase (ADR-0044, ADR-0053:
+            // the rhythm grows while the document stays within the count,
+            // including a one-page target); ADR-0052 extends that phase to
+            // reach a multi-page count exactly.
+            return self.fill((FitParams::default(), identity));
         }
 
         let margin_min = self.config.margin_min_scale;
@@ -870,19 +872,18 @@ mod tests {
     #[test]
     fn a_ceiling_below_the_reachable_stretch_reports_underfilled_without_bisecting() {
         // With `fit_stretch_max` = 3.5 the ceiling probe itself stays at one
-        // page: underfilled immediately, and the bisection never runs.
+        // page: underfilled immediately, and the bisection never runs. The
+        // oracle holds one page everywhere the run can reach (the ceiling
+        // clamps every probe below 4.0), so it carries no second branch.
         let config = FitConfig {
             target_pages: 2,
             max_stretch_spacing: 3.5,
             ..default_config(true)
         };
-        let outcome = session_growing_with_spacing(
-            &config,
-            |s| if s < 4.0 { 1 } else { 2 },
-            Rc::new(RefCell::new(Vec::new())),
-        )
-        .run()
-        .expect("fake compile never fails");
+        let outcome =
+            session_growing_with_spacing(&config, |_| 1, Rc::new(RefCell::new(Vec::new())))
+                .run()
+                .expect("fake compile never fails");
         assert!(outcome.underfilled);
         assert_eq!(
             outcome.compiles,
@@ -1177,17 +1178,166 @@ mod tests {
     }
 
     #[test]
+    fn a_compile_error_at_the_stretch_ceiling_probe_propagates() {
+        // Every capped stage fits at one page, so the run reaches the exact-
+        // count stretch; the compile breaks at the ceiling probe itself.
+        let config = FitConfig {
+            target_pages: 2,
+            ..default_config(true)
+        };
+        let mut session = Session::new(&config, |params| {
+            if (params.spacing_scale - FILL_EXTENDED_MAX_SPACING).abs() < 1e-12 {
+                Err(RenderError::Template {
+                    message: "boom at the stretch ceiling".into(),
+                })
+            } else {
+                Ok(output(1))
+            }
+        });
+        let error = session
+            .run()
+            .expect_err("the ceiling-probe failure must escape");
+        assert!(
+            error.to_string().contains("stretch ceiling"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn a_compile_error_inside_the_stretch_bisection_propagates() {
+        // The ceiling reaches the count, so the bisection runs; the compile
+        // breaks at its second midpoint (the first one is known-good).
+        let config = FitConfig {
+            target_pages: 2,
+            ..default_config(true)
+        };
+        let mut session = Session::new(&config, |params| {
+            if (params.spacing_scale - 9.75).abs() < 1e-12 {
+                Err(RenderError::Template {
+                    message: "boom in the stretch bisection".into(),
+                })
+            } else {
+                Ok(output(if params.spacing_scale < 11.0 { 1 } else { 2 }))
+            }
+        });
+        let error = session
+            .run()
+            .expect_err("the bisection failure must escape");
+        assert!(
+            error.to_string().contains("stretch bisection"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
     fn never_shrinks_a_document_that_fits_first_try() {
+        // Spec §7 hard requirement: a fitting first compile is never shrunk.
+        // The fill landing (ADR-0053) grows from the identity, so every probe
+        // of the run sits at or above the design values.
         let probes = Rc::new(RefCell::new(Vec::new()));
         let config = default_config(true);
         let outcome = fake_session(&config, |_| true, probes.clone())
             .run()
             .expect("fake compile never fails");
-        assert_eq!(outcome.compiles, 1, "a single identity compile (spec §7)");
-        assert_eq!(probes.borrow().len(), 1);
-        assert_eq!(probes.borrow()[0], FitParams::default());
+        let first = probes.borrow()[0];
+        assert_eq!(first, FitParams::default(), "the identity compiles first");
+        let scales: Vec<(f64, f64, f64)> = probes
+            .borrow()
+            .iter()
+            .map(|p| (p.font_scale, p.spacing_scale, p.margin_scale))
+            .collect();
+        assert!(
+            scales
+                .iter()
+                .all(|&(f, s, m)| f >= 1.0 && s >= 1.0 && m >= 1.0),
+            "no probe shrinks: {scales:?}"
+        );
         assert!(!outcome.overflowed);
-        assert_eq!(outcome.applied, FitParams::default(), "scale 1.00");
+    }
+
+    #[test]
+    fn a_fitting_one_page_cv_grows_spacing_to_fill_the_page() {
+        // One page while the spacing scale stays ≤ 1.6, two pages past it:
+        // the fill phase runs for the default one-page target too (ADR-0053)
+        // and lands on the largest fitting grid value.
+        let probes = Rc::new(RefCell::new(Vec::new()));
+        let config = default_config(true);
+        let outcome =
+            session_growing_with_spacing(&config, |s| if s <= 1.6 { 1 } else { 2 }, probes.clone())
+                .run()
+                .expect("fake compile never fails");
+        assert!(
+            (outcome.applied.spacing_scale - 1.5625).abs() < 1e-9,
+            "got {:?}",
+            outcome.applied
+        );
+        assert_eq!(
+            outcome.applied.font_scale, 1.0,
+            "fonts grow only at the spacing cap"
+        );
+        assert_eq!(
+            outcome.applied.margin_scale, 1.0,
+            "margins grow only past the font cap"
+        );
+        assert!(!outcome.overflowed);
+        assert!(!outcome.underfilled);
+        assert_eq!(
+            outcome.compiles,
+            1 + MAX_PHASE_PROBES + 1,
+            "identity + fill grid + the cap probe"
+        );
+    }
+
+    #[test]
+    fn a_one_page_fill_stops_at_the_ordinary_caps() {
+        // Content that stays one page at every cap: the one-page target grows
+        // to the caps (spacing 3.0, font 1.25, margins 1.4) and stops there —
+        // its count is already exact, so the ADR-0052 stretch past the caps
+        // never runs (ADR-0053).
+        let probes = Rc::new(RefCell::new(Vec::new()));
+        let config = default_config(true);
+        let outcome = fake_session(&config, |_| true, probes.clone())
+            .run()
+            .expect("fake compile never fails");
+        assert_eq!(
+            outcome.applied,
+            FitParams {
+                font_scale: FILL_MAX_FONT_SCALE,
+                spacing_scale: FILL_MAX_SCALE,
+                margin_scale: FILL_MAX_MARGIN_SCALE,
+            },
+            "caps, not the stretch ceiling"
+        );
+        assert!(!outcome.overflowed);
+        assert!(
+            !outcome.underfilled,
+            "one page is never under a one-page target"
+        );
+        let spacing_scales: Vec<f64> = probes.borrow().iter().map(|p| p.spacing_scale).collect();
+        assert!(
+            spacing_scales.iter().all(|&s| s <= FILL_MAX_SCALE),
+            "a one-page fill never probes the stretch: {spacing_scales:?}"
+        );
+    }
+
+    #[test]
+    fn the_one_page_fill_keeps_the_identity_when_nothing_above_it_fits() {
+        // A page already full at the design values: any growth makes two
+        // pages, so the fill phase returns the identity — filling a page must
+        // never overflow it.
+        let probes = Rc::new(RefCell::new(Vec::new()));
+        let config = default_config(true);
+        let outcome =
+            session_growing_with_spacing(&config, |s| if s <= 1.0 { 1 } else { 2 }, probes.clone())
+                .run()
+                .expect("fake compile never fails");
+        assert_eq!(
+            outcome.applied,
+            FitParams::default(),
+            "no growth fits, the identity stands"
+        );
+        assert!(!outcome.overflowed);
+        assert_eq!(outcome.compiles, 1 + MAX_PHASE_PROBES + 1);
     }
 
     #[test]

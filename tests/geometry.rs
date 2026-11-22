@@ -311,16 +311,18 @@ fn the_diy_left_rail_is_flush_left_and_the_right_rail_flush_right() {
 #[test]
 fn the_modern_band_spans_the_body_measure_from_the_left_margin() {
     // Pins the current, deliberate geometry: a panel over the text measure, not a
-    // page-width and not a centered strip. Short content so the fit loop never
-    // scales margins away from the asserted defaults. If it ever changes, this
-    // test must change with it and the ADR record why.
+    // page-width and not a centered strip. `--no-fit` keeps the margins at the
+    // defaults the coordinates assert: since ADR-0053 the fill loop grows
+    // margins on a fitting one-page document too, which would move the band
+    // with them. If the geometry ever changes, this test must change with it
+    // and the ADR record why.
     let dir = unique_dir("geom-modern");
     fs::write(
         dir.join("cv.yaml"),
         "schema: 1\ncv:\n  name: Jane Doe\n  headline: Engineer\n  contact:\n    email: jane@example.dev\n  sections:\n    - title: Work\n      type: entries\n      items:\n        - heading: Staff\n          org: Acme\n          dates: \"2020\"\ndesign:\n  template: modern\n",
     )
     .expect("write yaml");
-    let (ok, out) = run_cv(&dir, &["build"]);
+    let (ok, out) = run_cv(&dir, &["build", "--no-fit"]);
     assert!(ok, "build failed: {out}");
     let paths = drawn_paths(&fs::read(dir.join("cv.pdf")).expect("read pdf"));
     let bands: Vec<_> = paths

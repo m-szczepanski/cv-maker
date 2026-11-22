@@ -1109,6 +1109,49 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   rule is untouched. Spec §7 (goals bullets, step 4, fill paragraph, hard bounds) rewritten in
   the same change.
 
+## ADR-0053 — one-page targets fill too: the gap after the last section goes away
+
+- **Context:** With ADR-0052 in place, the owner's real one-page CV still showed a
+  large white hole between the last section (Education) and the GDPR footer. The
+  cause is not the footer placement but the fill scoping: ADR-0044 entered the fill
+  phase for multi-page targets only, and ADR-0052 deliberately left that exception
+  ("The ADR-0044 one-page targets never fill rule is untouched"). A one-page first
+  compile is *always* "within target", so the loop returned the identity layout and
+  the `v(1fr)`-pinned footer gathered every unused inch above itself. The owner's
+  ruling: "If there is enough space we should absolutely try to fill all of the
+  page" — increasing font sizes and gaps is exactly what the fill phase does, so
+  the exception is what goes.
+- **Decision:** A fitting first compile enters Phase F for **every** target, one
+  page included; the searches are unchanged. For `pages: 1`, "still fits" means
+  "still one page", so the spacing/font/margin stages grow to the largest settings
+  that keep the single page and never overflow it — and the ADR-0052 past-caps
+  stretch cannot trigger by construction (a document always has ≥ 1 page, so the
+  count never lands *under* a one-page target). A far-too-short CV therefore grows
+  to the ordinary taste caps (spacing 3.0, font 1.25, margins 1.4) and keeps the
+  remaining slack: a one page is never rescued into a spread-twelve-times layout,
+  because there is no page-count contract to satisfy and stretched rhythm past the
+  caps is worse than an honest gap. "Never shrink a fitting document", the floors,
+  `--no-fit` and `fit_one_page: false` all keep their meanings — the last two
+  remain the opt-out for anyone who wants the designed layout and its whitespace.
+  The `pages: N > 1` machinery (settle, stretch, underfilled warnings) is untouched.
+- **Consequences:** Spec §7's "A one-page target never fills" sentence and its
+  ADR-0044 scoping are superseded, rewritten in the same change. A fitting one-page
+  build now costs 7–19 compiles instead of 1 — the spacing stage always runs its
+  full grid, so even an exactly-full page pays 1 + 5 + 1 probes to learn that
+  nothing above the identity fits (a nearly-full page stops there; a half-full
+  one chains further; a too-short one pays the cap stages and stops at the
+  caps) — build-time-bound M4's "<500 ms typical" applies to the tightening
+  path; a filled run measures ~3.5–4.5 s end-to-end in debug builds (a
+  single-compile debug build was ~2.5 s), accepted for the fill guarantee.
+  Success lines for filled pages show `spacing > 1.00`
+  (README examples extended). Two existing expectations moved with the policy: the
+  GDPR-tipping "bare" case now lands on a grown spacing scale, and
+  `tests/entry_gaps.rs` measures designed-value rhythm in absolute points, so it
+  builds with `--no-fit` — the fit landing must never be an input to a typography
+  regression test. New policy pins: one page grows to the largest fitting spacing,
+  one page caps at the ordinary limits without stretching, and an exactly-full page
+  keeps the identity.
+
 ## Open questions (spec §14) — status
 
 All closed as of M6; each carries the ADR that resolved it.

@@ -13,7 +13,7 @@ cv build         # writes cv.pdf next to it
 
 ```
 $ cv build
-cv.pdf  1 page  fit: scale 1.00  (218 ms)
+cv.pdf  1 page  fit: scale 1.25 spacing 3.00 margins 1.40  (240 ms)
 ```
 
 **What you get**
@@ -207,19 +207,22 @@ design:
 ```
 
 The target is a promise the pages are *used*, not just allowed for: when the content
-already fits with room to spare, `cv` grows the layout instead of leaving page 2 with
-two lines on it — spacing first, then type size, then margins, and if the caps of that
-normal growth still do not span your count, one last search stretches the rhythm
-further, only as far as needed to land on the page count exactly. A section that fits
-on one page is never split across two: it moves whole to the next page. You can see
-what the loop did in the last line of `cv build`:
+already fits with room to spare — on any target, including the default one page —
+`cv` grows the layout instead of leaving the bottom of the page empty: spacing first,
+then type size, then margins, up to the largest setting that still fits. If the caps
+of that normal growth still do not span a multi-page count, one last search stretches
+the rhythm further, only as far as needed to land on the page count exactly (a
+one-page CV never gets that far — its count is exact already, so growth stops at the
+caps). A section that fits on one page is never split across two: it moves whole to
+the next page. You can see what the loop did in the last line of `cv build`:
 
 ```
-cv.pdf  1 page  fit: scale 1.00  (218 ms)                             # already fit
-cv.pdf  1 page  fit: scale 1.00 spacing 0.70 margins 0.88  (262 ms)   # tightened spacing to fit
-cv.pdf  2 pages  fit: scale 1.00  (231 ms)                            # fills its 2-page target as written
-cv.pdf  2 pages  fit: scale 1.22 spacing 3.00 margins 1.00  (240 ms)  # grew to fill its 2-page target
-cv.pdf  2 pages  fit: scale 1.25 spacing 4.41 margins 1.40  (240 ms)  # ...stretched past the caps to land on 2
+cv.pdf  1 page  fit: scale 1.00  (218 ms)                              # the page was already full
+cv.pdf  1 page  fit: scale 1.00 spacing 1.44 margins 1.00  (240 ms)    # ...grew the rhythm to fill a half-full page
+cv.pdf  1 page  fit: scale 1.00 spacing 0.70 margins 0.88  (262 ms)    # tightened spacing to fit
+cv.pdf  2 pages  fit: scale 1.00  (231 ms)                             # fills its 2-page target as written
+cv.pdf  2 pages  fit: scale 1.22 spacing 3.00 margins 1.00  (240 ms)   # grew to fill its 2-page target
+cv.pdf  2 pages  fit: scale 1.25 spacing 4.41 margins 1.40  (240 ms)   # ...stretched past the caps to land on 2
 ```
 
 You control how far the loop may go, in both directions:
