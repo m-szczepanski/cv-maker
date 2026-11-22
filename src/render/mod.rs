@@ -41,8 +41,10 @@ pub struct RenderRequest {
     pub user_font_items: Vec<Vec<u8>>,
 }
 
-/// One compile's result (spec §9).
-#[derive(Debug)]
+/// One compile's result (spec §9). `Clone` exists for the fit loop's probe
+/// history ([`crate::fit`]): recordings are cheap (the PDF is tens of KB) and
+/// the fallback adopts one verbatim.
+#[derive(Debug, Clone)]
 pub struct RenderOutput {
     pub pdf: Vec<u8>,
     pub page_count: usize,

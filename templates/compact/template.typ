@@ -72,6 +72,14 @@
   #text(size: heading-size, weight: "semibold", fill: accent, font: design.fonts.heading)[#upper(title)]
 ]
 
+// The gap between two adjacent entries. Typst collapses touching flow spacing to its
+// maximum (verified against the pinned 0.15.1 with a spacing sweep: N adjacent blocks
+// with `spacing: s` separate each pair by exactly one `s`), so a plain `entry-gap` here
+// separates entries by the same few points that also sit in the line pitch — entries
+// blend into their bullet lists. Doubling it keeps a visible three-step rhythm:
+// tight bullets (0.5), entries (2), and the larger section gaps.
+#let between-entries = entry-gap * 2
+
 // One entries item. Built in code mode so the optional midline parts and bullets can be
 // assembled with plain `if` (bare `if` lines inside markup brackets are literal text).
 #let entry(item) = {
@@ -81,15 +89,18 @@
   let dates = if item.dates != none { text(size: small-size, fill: muted)[#item.dates] } else { none }
   let mid = if midline.len() > 0 { text(size: small-size)[#midline.join(text(fill: muted, "  ·  "))] } else { none }
   let bullets = if item.bullets != none { list(..item.bullets.map(inline), spacing: entry-gap * 0.5, tight: true) } else { none }
-  block(spacing: entry-gap, breakable: false)[
+  block(spacing: between-entries, breakable: false)[
+    #set par(spacing: entry-gap * 0.5)
     #grid(
       columns: (1fr, auto),
       align: (left, right),
       text(size: body-size, weight: "semibold", font: design.fonts.heading)[#item.heading],
       dates,
     )
+    // Midline and bullets hug the heading: the global par spacing (≈1em) would
+    // float them apart, making one job read as three detached lines. Tightening
+    // only inside the entry keeps the between-entry gap the dominant beat.
     #if mid != none [#mid]
-    #if mid != none [#v(0.3em)]
     #if bullets != none [#bullets]
   ]
 }
@@ -101,7 +112,8 @@
   if item.issuer != none { midline.push(text(item.issuer)) }
   if item.url != none { midline.push(link(item.url)[#text(fill: accent, item.url)]) }
   let mid = if midline.len() > 0 { text(size: small-size)[#midline.join(text(fill: muted, "  ·  "))] } else { none }
-  block(spacing: entry-gap, breakable: false)[
+  block(spacing: between-entries, breakable: false)[
+    #set par(spacing: entry-gap * 0.5)
     #par[#text(size: body-size, weight: "semibold", font: design.fonts.heading)[#item.name]]
     #if mid != none [#par[#mid]]
   ]

@@ -1026,6 +1026,89 @@ the source of truth; if a decision here contradicts it, fix one of them and say 
   they already have for any type they miss. The deviation from the literal "of type
   entries" wording is flagged for the owner's review.
 
+## ADR-0051 — the compact template's entry rhythm: Typst collapses spacing to a maximum
+
+- **Context:** The owner built their real CV with `compact` and found the Experience
+  section unreadable: the gap between one entry's last bullet and the next entry
+  heading was "almost non-existent", while the lines *inside* one entry were further
+  apart from each other than entries were — the hierarchy was inverted. Two mechanisms,
+  both verified against the pinned Typst 0.15.1 by reading text-span baselines out of
+  the PDF content stream:
+  1. Adjacent flow spacing collapses to the **maximum**, so touching
+     `block(spacing: entry-gap)` entries separate by exactly one `entry_gap` (4pt):
+     measured 10.9pt between-entry baseline distance against 8.9pt bullet pitch.
+  2. Inside an entry, the heading grid and the midline paragraph are separated by the
+     global `par` spacing (≈1em, 10.7pt), and the bullet list opens with that same
+     slack: measured heading→midline 16.9pt and midline→first bullet 20.5pt — bigger
+     than the between-entry gap itself, so an entry read as three detached lines and
+     the next heading attached itself to the previous bullet list.
+- **Decision:** Both fixes live in the compact template, where the rhythm is its
+  business: `between-entries = entry-gap * 2` as the entry and certificate block
+  spacing, and a scoped `set par(spacing: entry-gap * 0.5)` inside those blocks that
+  pulls heading, midline and bullets into one unit (the `v(0.3em)` before the list
+  goes away with it). Bullet spacing stays `entry-gap * 0.5`. Measured at the defaults:
+  within-entry ≈ bullets ≈ 8.9pt < entries 14.2pt < section boundaries 16pt plus the
+  accented heading — a visible hierarchy. `entry_gap` keeps its spec §5 meaning and the
+  fit loop's `spacing_scale` still multiplies everything proportionally. The other
+  built-ins share the collapse and the inverted interior; the owner uses `compact`, so
+  they are deliberately left for a separate review rather than retuned here.
+- **Consequences:** Compact CVs got noticeably denser per entry, so every fit-loop
+  fixture that relies on a specific overflow point was re-tuned to measured values:
+  the GDPR tipping case now needs 23 entries (bare → `scale 1.00`, clause → `spacing
+  0.94 margins 0.97`), the shrink / `--no-fit` / `fit_one_page: false` / floor cases
+  use 18×2-bullet CVs (two pages natural, one page fitted), the custom-template copy
+  uses 20×2, and the overflow-warning case five 10-entry sections against a two-page
+  target. A new integration test (`tests/entry_gaps.rs`) measures baselines from the
+  PDF content stream and pins that the between-entry distance exceeds **both** the
+  bullet pitch and the heading→midline distance by a full `entry_gap` — each half
+  fails against the pre-fix template — and that raising the design `entry_gap` still
+  widens the separation proportionally.
+
+## ADR-0052 — `design.pages` is an exact contract: gentle overflow landings, stretch to fill
+
+- **Context:** The owner's real CV hit both failure shapes of the target-as-maximum loop. With
+  the default one-page target, content that overflows even at the fit floors rendered the floors
+  compile: spacing squeezed to 0.6, fonts to the floor, typography damaged — and STILL two pages,
+  with the GDPR footer pinned at the bottom of page 2 above a large hole (the owner: "the
+  experience section is really crowded and in the same time we have a huge empty space between
+  education and gdpr"). Compression past the point where the page count stops falling buys no
+  page. The mirror shape: a configured `pages: 2` could deliver a one-page file whenever the
+  fill caps were reached without spanning the target, violating the page contract (the owner:
+  "if user sets 2 pages in config we HAVE to produce two page file").
+- **Decision:** `design.pages: N` means EXACTLY N, both directions, whenever reachable:
+  1. Unreachable from above (floors still overflow): the loop records every probe
+     (`Session::history`) and delivers the **least aggressive probed compile among those reaching
+     the smallest page count it saw** (ordering: font, then spacing, then margin), warning about
+     the auto-fitted count and the spill measured against the target. The identity itself is a
+     legitimate pick when no compression moved the count.
+  2. Unreachable from below (pages under N): the fill phase — previously skipped for a landing
+     that merely fits — now chains after ANY landing under the target (`settle`), and when the
+     ordinary caps (spacing 3.0, font 1.25, margin 1.4, kept as taste limits for normal growth)
+     still leave the count short, a final bounded bisection grows `spacing_scale` past them to
+     the gentlest stretch that reaches N, under a ceiling set by `design.fit_stretch_max`
+     (default 12×, clamped into [3.0, 12.0] so the knob can only narrow the stretch search,
+     never raise the sanity bound or disable ordinary fill).
+  3. Neither direction can fabricate the count (content far too long, or a stretch jumping over
+     N because kept-whole sections move pages together): the honest compile ships with a
+     warning naming the reachable count (`too short …` / `auto-fitted to …`); exit stays 0
+     (ADR-0026 unchanged).
+  Readability floors are never crossed; only growth past taste caps is possible, and only as
+  far as reaching the count requires. The searches are the same bounded bisections, so the
+  result stays deterministic; compile bounds become 13 tighten (fallback is free — it picks
+  from history), 25 fill-with-stretch, 36 when a below-target tighten landing chains both.
+- **Consequences:** The warning texts change (both carry the landed/reachable count and suggest
+  `design.pages` — the integration tests' pinned substrings moved with them). `grow_to_cap`
+  takes a per-stage lower bound so chained fills grow from the landing instead of 1.0.
+  `RenderOutput` derives `Clone` for the probe history (tens of KB per compile, ≤36 compiles).
+  Sparse content can now ship as a two-page CV with very wide gaps — that is the contract the
+  owner asked for; the alternative (a short one-page file for a `pages: 2` config) was rejected.
+  The stretch ceiling defaults to the reviewable 12× constant and is per-CV configurable via
+  `design.fit_stretch_max` — added after review flagged that exact-count stretching can produce
+  very wide gaps; a lower knob converts unreachable counts into the honest `too short` warning
+  instead of a stretched document. The ADR-0044 "one-page targets never fill"
+  rule is untouched. Spec §7 (goals bullets, step 4, fill paragraph, hard bounds) rewritten in
+  the same change.
+
 ## Open questions (spec §14) — status
 
 All closed as of M6; each carries the ADR that resolved it.
